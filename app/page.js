@@ -282,8 +282,9 @@ export default function Home() {
           }
           if (ev.agent === "social_content" && ev.status === "done") setSocialDone(true);
           if (ev.agent === "all" && ev.status === "done") return true;
-          if (ev.status === "error") throw new Error(ev.message);
-        } catch (_) {}
+          if (ev.status === "error") throw new Error(ev.message || "Blad serwera");
+        } catch (parseErr) {
+          if (parseErr.message && !parseErr.message.includes("JSON")) throw parseErr; // rethrow non-JSON errors}
       }
     }
     return true;
@@ -391,8 +392,10 @@ export default function Home() {
           try {
             const ev = JSON.parse(line);
             if (ev.status === "variant_done") setDesignVariants(p => [...p, ev.data]);
-            if (ev.status === "error") throw new Error(ev.message);
-          } catch (_) {}
+            if (ev.status === "error") throw new Error(ev.message || "Blad Gemini API");
+          } catch (parseErr) {
+            if (parseErr.message && !parseErr.message.includes("JSON")) throw parseErr;
+          }
         }
       }
       setDesignIteration(iteration + 1);
