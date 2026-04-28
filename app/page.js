@@ -338,7 +338,7 @@ export default function Home() {
       const colors = brandColors.split(/[,\s]+/).filter(Boolean);
       const actualText = designTextChoice === "custom" ? designText : "";
 
-      const res = await fetch("/api/design", {
+      const res = await fetch("/design", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           concept: concept.slice(0, 2000),
@@ -353,6 +353,7 @@ export default function Home() {
           selectedFormats,
         }),
       });
+      if (!res.ok) { const e = await res.text().catch(()=>""); throw new Error(`Blad API (${res.status}): ${e.slice(0,80)}`); }
       const reader = res.body.getReader();
       const dec = new TextDecoder();
       let buf = "";
@@ -384,10 +385,14 @@ export default function Home() {
     if (results["social_from_strategy"]) sections.push({ heading: "Posty i Rolki", content: results["social_from_strategy"] });
     if (results.analyst) sections.push({ heading: "Plan Reklamowy", content: results.analyst });
 
-    const res = await fetch("/api/export", {
+    const res = await fetch("/export", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ title: `Roman - ${MODES[mode]?.label || "Raport"}`, sections }),
     });
+    if (!res.ok) {
+      alert("Blad eksportu Word. Sprobuj ponownie.");
+      return;
+    }
     const blob = await res.blob();
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
