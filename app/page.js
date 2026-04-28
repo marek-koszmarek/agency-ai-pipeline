@@ -185,6 +185,7 @@ export default function Home() {
   const [activeResultTab, setActiveResultTab]     = useState(null);
 
   // ── Post-pipeline ─────────────────────────────────────────────────
+  const [visualDirection, setVisualDirection] = useState("");
   const [wantsAnalyst, setWantsAnalyst]     = useState(null);
   const [wantsSocial, setWantsSocial]       = useState(null);
   const [socialFromType, setSocialFromType] = useState("posts");
@@ -362,9 +363,18 @@ export default function Home() {
   const runDesign = async (iteration = 0, feedback = "") => {
     setDesignGenerating(true); setDesignError(""); setDesignVariants([]);
     try {
-      const concept = mode === "design"
+      // For design, combine creative content + user visual direction
+      const baseContent = mode === "design"
         ? (briefText || "")
-        : (results["social_content"] || results.creative || results.researcher || briefText || "");
+        : (results.creative || results["social_content"] || results.researcher || briefText || "");
+      // Append visual direction if provided - this is pure visual guidance, not brief
+      const concept = visualDirection
+        ? `VISUAL DIRECTION FROM USER:
+${visualDirection}
+
+CREATIVE CONCEPT:
+${baseContent}`
+        : baseContent;
       const colors = brandColors.split(/[,\s]+/).filter(Boolean);
       const res = await fetch("/design", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -552,9 +562,28 @@ export default function Home() {
 
             {/* DESIGN OPTIONS */}
             {mode === "design" && (
+              <>
               <div className="section">
                 <div className="section-header">
                   <div className="section-num">02</div>
+                  <div className="section-title">Kierunek wizualny</div>
+                  <div className="section-hint">opcjonalne — pomaga Romanowi lepiej dobrać estetykę</div>
+                </div>
+                <div className="section-body">
+                  <div className="field-label">Opisz jak ma wyglądać grafika</div>
+                  <textarea className="field-textarea" value={visualDirection}
+                    onChange={e => setVisualDirection(e.target.value)} style={{ minHeight: 80 }}
+                    placeholder={"Przykłady kierunku wizualnego:
+— Minimalistyczne zdjęcie produktu na białym tle, dużo przestrzeni
+— Ciemne tło, złote akcenty, luksusowa atmosfera
+— Lifestyle — kobieta z kawą, słoneczne mieszkanie, casual
+— Geometryczne kształty, bold kolory, Swiss design
+— Flat lay z produktem i roślinami, pastelowe kolory"} />
+                </div>
+              </div>
+              <div className="section">
+                <div className="section-header">
+                  <div className="section-num">03</div>
                   <div className="section-title">Assety marki</div>
                 </div>
                 <div className="section-body" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
@@ -629,6 +658,7 @@ export default function Home() {
                   </div>
                 </div>
               </div>
+              </>
             )}
 
             {/* NOTES */}
@@ -773,11 +803,21 @@ export default function Home() {
                   </>
                 )}
                 {/* Design */}
-                {wantsAnalyst!==null && (mode!=="concept"&&mode!=="strategy" || wantsSocial!==null) && (
-                  <button className="btn-action primary"
-                    onClick={() => { setView("design_results"); runDesign(0,""); }}>
-                    🖼️ Generuj grafiki
-                  </button>
+                {(wantsAnalyst!==null || mode==="ads" || mode==="social") && (mode!=="concept"&&mode!=="strategy" || wantsSocial!==null) && (
+                  <>
+                    {visualDirection === "" && (
+                      <div style={{display:"flex",alignItems:"center",gap:8,flex:1}}>
+                        <input className="field-input" style={{flex:1,fontSize:12}}
+                          value={visualDirection}
+                          onChange={e=>setVisualDirection(e.target.value)}
+                          placeholder="Opisz kierunek wizualny grafiki (opcjonalnie)..." />
+                      </div>
+                    )}
+                    <button className="btn-action primary"
+                      onClick={() => { setView("design_results"); runDesign(0,""); }}>
+                      🖼️ Generuj grafiki
+                    </button>
+                  </>
                 )}
               </div>
             )}
