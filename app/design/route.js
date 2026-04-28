@@ -1,4 +1,4 @@
-import { generateImageWithGemini, buildImagePrompt, FORMATS, getLogoPosition, getTextY } from "@/lib/designer";
+import { generateImageWithGemini, buildImagePrompt, extractVisualDirection, FORMATS, getLogoPosition, getTextY } from "@/lib/designer";
 
 export const maxDuration = 120;
 
