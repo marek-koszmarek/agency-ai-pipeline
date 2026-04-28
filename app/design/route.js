@@ -1,4 +1,4 @@
-import { generateImageWithGemini, buildImagePrompt, extractVisualDirection, FORMATS, getLogoPosition, getTextY } from "@/lib/designer";
+import { generateImageWithGemini, buildImagePrompt, FORMATS, getLogoPosition, getTextY } from "@/lib/designer";
 
 export const maxDuration = 120;
 
@@ -8,7 +8,7 @@ export async function POST(req) {
   const body = await req.json();
   const {
     concept,
-    postContent = "",      // specific post content for social graphics
+    postContent = "",
     brandColors = [],
     logoBase64,
     fontBase64,
@@ -31,11 +31,11 @@ export async function POST(req) {
         const sharp = (await import("sharp")).default;
 
         const fullConcept = postContent
-          ? `KONTEKST POSTU:\n${postContent}\n\nSZERSZY KONCEPT:\n${concept}`
+          ? `POST CONTEXT: ${postContent}\n\nBRAND CONCEPT: ${concept}`
           : concept;
 
         const finalConcept = feedbackNotes
-          ? `${fullConcept}\n\nPOPRAWKI OD KLIENTA:\n${feedbackNotes}`
+          ? `${fullConcept}\n\nCLIENT FEEDBACK FOR REVISION: ${feedbackNotes}`
           : fullConcept;
 
         const variants = [];
@@ -58,54 +58,58 @@ export async function POST(req) {
             const fmt = FORMATS[formatKey];
             if (!fmt) continue;
 
-            let composed = sharp(imageBuffer).resize(fmt.w, fmt.h, { fit: "cover", position: "center" });
-            const svgW = fmt.w;
-            const svgH = fmt.h;
-            const svgLayers = [];
+            const composites = [];
 
-            if (textOnImage) {
+            // Only add SVG overlay if there's actual text to render
+            // This prevents the gray rectangle bug when textOnImage is empty
+            if (textOnImage && textOnImage.trim()) {
               let fontFaceCSS = "";
               if (fontBase64) {
                 fontFaceCSS = `@font-face { font-family: 'BrandFont'; src: url('data:font/truetype;base64,${fontBase64}'); }`;
               }
               const fontFamily = fontBase64 ? "BrandFont" : "Arial, Helvetica, sans-serif";
-              const textY = getTextY(logoPosition, svgH);
-              const fontSize = Math.floor(svgW * 0.05);
+              const textY = getTextY(logoPosition, fmt.h);
+              const fontSize = Math.floor(fmt.w * 0.05);
+              const textContent = textOnImage.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
-              svgLayers.push(`
+              const svgText = `<svg width="${fmt.w}" height="${fmt.h}" xmlns="http://www.w3.org/2000/svg">
                 <defs>
                   <style>${fontFaceCSS}</style>
                   <filter id="shadow">
-                    <feDropShadow dx="0" dy="2" stdDeviation="6" flood-opacity="0.6"/>
+                    <feDropShadow dx="0" dy="2" stdDeviation="6" flood-opacity="0.55"/>
                   </filter>
                 </defs>
-                <rect x="40" y="${textY - fontSize - 20}" width="${svgW - 80}" height="${fontSize + 40}"
-                  fill="black" fill-opacity="0.35" rx="8"/>
-                <text x="${svgW / 2}" y="${textY}"
-                  font-family="${fontFamily}" font-size="${fontSize}"
-                  fill="white" text-anchor="middle" filter="url(#shadow)">${textOnImage}</text>
-              `);
+                <rect x="40" y="${textY - fontSize - 16}" width="${fmt.w - 80}" height="${fontSize + 36}"
+                  fill="black" fill-opacity="0.38" rx="8"/>
+                <text x="${fmt.w / 2}" y="${textY}"
+                  font-family="${fontFamily}" font-size="${fontSize}" font-weight="600"
+                  fill="white" text-anchor="middle" filter="url(#shadow)">${textContent}</text>
+              </svg>`;
+
+              composites.push({ input: Buffer.from(svgText), top: 0, left: 0 });
             }
 
-            const svgBuffer = Buffer.from(
-              `<svg width="${svgW}" height="${svgH}" xmlns="http://www.w3.org/2000/svg">${svgLayers.join("")}</svg>`
-            );
-
-            const composites = [{ input: svgBuffer, top: 0, left: 0 }];
-
+            // Add logo if provided
             if (logoBase64) {
               const logoBuffer = Buffer.from(logoBase64, "base64");
-              const maxLogoW = Math.floor(svgW * 0.22);
-              const maxLogoH = Math.floor(svgH * 0.1);
+              const maxLogoW = Math.floor(fmt.w * 0.22);
+              const maxLogoH = Math.floor(fmt.h * 0.1);
               const resizedLogo = await sharp(logoBuffer)
                 .resize(maxLogoW, maxLogoH, { fit: "inside" })
                 .toBuffer();
               const logoMeta = await sharp(resizedLogo).metadata();
-              const pos = getLogoPosition(logoPosition, svgW, svgH, logoMeta.width, logoMeta.height);
+              const pos = getLogoPosition(logoPosition, fmt.w, fmt.h, logoMeta.width, logoMeta.height);
               composites.push({ input: resizedLogo, top: pos.y, left: pos.x });
             }
 
-            const finalBuffer = await composed.composite(composites).png().toBuffer();
+            let finalBuffer;
+            const resized = sharp(imageBuffer).resize(fmt.w, fmt.h, { fit: "cover", position: "center" });
+            if (composites.length > 0) {
+              finalBuffer = await resized.composite(composites).png().toBuffer();
+            } else {
+              finalBuffer = await resized.png().toBuffer();
+            }
+
             formatResults[formatKey] = finalBuffer.toString("base64");
           }
 
