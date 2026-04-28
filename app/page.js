@@ -284,7 +284,8 @@ export default function Home() {
           if (ev.agent === "all" && ev.status === "done") return true;
           if (ev.status === "error") throw new Error(ev.message || "Blad serwera");
         } catch (parseErr) {
-          if (parseErr.message && !parseErr.message.includes("JSON")) throw parseErr; // rethrow non-JSON errors}
+          if (parseErr.message && !parseErr.message.includes("JSON")) throw parseErr;
+        }
       }
     }
     return true;
