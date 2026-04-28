@@ -165,6 +165,8 @@ export default function Home() {
   const [socialProductFiles, setSocialProductFiles] = useState([]);
   const [socialTonality, setSocialTonality] = useState("same");
   const [researchBrand, setResearchBrand]   = useState(false);
+  const [brandUrl, setBrandUrl]             = useState("");
+  const [visualBrief, setVisualBrief]       = useState("");
 
   // ── Brief inputs ─────────────────────────────────────────────────
   const [briefText, setBriefText]           = useState("");
@@ -405,7 +407,9 @@ ${baseContent}`
           if (!line) continue;
           let ev;
           try { ev = JSON.parse(line); } catch (_) { continue; }
+          if (ev.status === "brief_ready" && ev.brief) setVisualBrief(ev.brief);
           if (ev.status === "variant_done") setDesignVariants(p => [...p, ev.data]);
+          if (ev.status === "done" && ev.visualBrief) setVisualBrief(ev.visualBrief);
           if (ev.status === "error") throw new Error(ev.message || "Błąd Gemini API");
         }
       }
@@ -574,6 +578,15 @@ ${baseContent}`
                     <textarea className="field-textarea" value={visualDirection}
                       onChange={e => setVisualDirection(e.target.value)} style={{ minHeight: 70 }}
                       placeholder="np. Minimalistyczne zdjecie produktu / Ciemne tlo ze zlotem / Lifestyle kobieta z kawa / Geometryczne ksztalty bold kolory" />
+                  </div>
+                  <div style={{ marginTop: 12 }}>
+                    <div className="field-label">URL strony marki (opcjonalnie)</div>
+                    <input className="field-input" value={brandUrl}
+                      onChange={e => setBrandUrl(e.target.value)}
+                      placeholder="https://nazwafirmy.pl — Roman przeskanuje stronę i zaciągnie styl i produkty" />
+                    <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
+                      Roman przeskanuje stronę, wyciągnie opisy produktów i styl wizualny marki
+                    </div>
                   </div>
                 </div>
                 <div className="section">
@@ -831,10 +844,18 @@ ${baseContent}`
             </div>
             <div className="result-content">
               {designGenerating && designVariants.length === 0 && (
-                <div className="empty-state">
-                  <div className="empty-icon"><span className="spin">⟳</span></div>
-                  <div>Gemini generuje wizualizacje...</div>
-                  <div style={{fontSize:12,color:"var(--text-dim)"}}>To może zająć 30–60 sekund</div>
+                <div>
+                  <div className="empty-state">
+                    <div className="empty-icon"><span className="spin">⟳</span></div>
+                    <div>Roman pisze brief → Imagen 4 Ultra generuje...</div>
+                    <div style={{fontSize:12,color:"var(--text-dim)"}}>30–60 sekund</div>
+                  </div>
+                  {visualBrief && (
+                    <div style={{margin:"16px 0",padding:"14px 18px",background:"var(--surface2)",border:"1px solid var(--border2)",borderRadius:10}}>
+                      <div style={{fontSize:10,letterSpacing:"1.5px",color:"var(--text-muted)",fontFamily:"monospace",marginBottom:8}}>BRIEF WIZUALNY ROMANA →</div>
+                      <div style={{fontSize:12,color:"var(--text-muted)",lineHeight:1.7,fontStyle:"italic"}}>{visualBrief}</div>
+                    </div>
+                  )}
                 </div>
               )}
               {designError && (
@@ -854,6 +875,12 @@ ${baseContent}`
               )}
               {designVariants.length > 0 && (
                 <>
+                  {visualBrief && (
+                    <div style={{marginBottom:20,padding:"14px 18px",background:"var(--surface2)",border:"1px solid var(--border2)",borderRadius:10}}>
+                      <div style={{fontSize:10,letterSpacing:"1.5px",color:"var(--text-muted)",fontFamily:"monospace",marginBottom:6}}>BRIEF WIZUALNY → IMAGEN 4 ULTRA</div>
+                      <div style={{fontSize:12,color:"var(--text-muted)",lineHeight:1.7,fontStyle:"italic"}}>{visualBrief}</div>
+                    </div>
+                  )}
                   <div className="design-grid">
                     {designVariants.map((v,i) => (
                       <DesignVariant key={i} variant={v} variantNum={i+1} selectedFormats={selectedFormats} />
