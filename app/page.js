@@ -573,12 +573,7 @@ ${baseContent}`
                   <div className="field-label">Opisz jak ma wyglądać grafika</div>
                   <textarea className="field-textarea" value={visualDirection}
                     onChange={e => setVisualDirection(e.target.value)} style={{ minHeight: 80 }}
-                    placeholder={"Przykłady kierunku wizualnego:
-— Minimalistyczne zdjęcie produktu na białym tle, dużo przestrzeni
-— Ciemne tło, złote akcenty, luksusowa atmosfera
-— Lifestyle — kobieta z kawą, słoneczne mieszkanie, casual
-— Geometryczne kształty, bold kolory, Swiss design
-— Flat lay z produktem i roślinami, pastelowe kolory"} />
+                    placeholder="np. Minimalistyczne zdjecie produktu, biale tlo. Albo: ciemne tlo, zlote akcenty, luksus. Albo: lifestyle, kobieta z kawa, sloneczne mieszkanie." />
                 </div>
               </div>
               <div className="section">
