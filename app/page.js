@@ -560,73 +560,72 @@ ${baseContent}`
               </div>
             )}
 
-            {/* DESIGN OPTIONS */}
+                        {/* DESIGN OPTIONS */}
             {mode === "design" && (
-              <>
-              <div className="section">
-                <div className="section-header">
-                  <div className="section-num">02</div>
-                  <div className="section-title">Kierunek wizualny</div>
-                  <div className="section-hint">opcjonalne — pomaga Romanowi lepiej dobrać estetykę</div>
-                </div>
-                <div className="section-body">
-                  <div className="field-label">Opisz jak ma wyglądać grafika</div>
-                  <textarea className="field-textarea" value={visualDirection}
-                    onChange={e => setVisualDirection(e.target.value)} style={{ minHeight: 80 }}
-                    placeholder="np. Minimalistyczne zdjecie produktu, biale tlo. Albo: ciemne tlo, zlote akcenty, luksus. Albo: lifestyle, kobieta z kawa, sloneczne mieszkanie." />
-                </div>
-              </div>
-              <div className="section">
-                <div className="section-header">
-                  <div className="section-num">03</div>
-                  <div className="section-title">Assety marki</div>
-                </div>
-                <div className="section-body" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-                  <div>
-                    <div className="field-label">Logo (PNG z przezroczystością)</div>
-                    <FileOrPaste files={logoFile} onFiles={setLogoFile} accept={".png,.jpg,.jpeg,.webp"} single
-                      text={null} onText={()=>{}} textPlaceholder="(tylko plik)" />
+              <div style={{ display:"flex", flexDirection:"column", gap:28 }}>
+                <div className="section">
+                  <div className="section-header">
+                    <div className="section-num">02</div>
+                    <div className="section-title">Kierunek wizualny</div>
+                    <div className="section-hint">opcjonalne</div>
                   </div>
-                  <div className="grid-2">
+                  <div className="section-body">
+                    <div className="field-label">Opisz jak ma wyglądać grafika</div>
+                    <textarea className="field-textarea" value={visualDirection}
+                      onChange={e => setVisualDirection(e.target.value)} style={{ minHeight: 70 }}
+                      placeholder="np. Minimalistyczne zdjecie produktu / Ciemne tlo ze zlotem / Lifestyle kobieta z kawa / Geometryczne ksztalty bold kolory" />
+                  </div>
+                </div>
+                <div className="section">
+                  <div className="section-header">
+                    <div className="section-num">03</div>
+                    <div className="section-title">Assety marki</div>
+                  </div>
+                  <div className="section-body" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
                     <div>
-                      <div className="field-label">Font marki (TTF, OTF)</div>
-                      <div className="upload-zone" onClick={() => {}} style={{cursor:"default"}}>
-                        <input type="file" accept={FONT_ACCEPTED} onChange={async e => setFontFile(await prepFiles(e.target.files))} style={{display:"block",opacity:0,position:"absolute"}} />
-                        <div className="upload-icon">🔤</div>
-                        <div className="upload-label" onClick={e => e.currentTarget.previousElementSibling?.previousElementSibling?.click()}>
-                          {fontFile[0]?.name || "Wgraj font TTF / OTF"}
+                      <div className="field-label">Logo (PNG z przezroczystością)</div>
+                      <FileOrPaste files={logoFile} onFiles={setLogoFile} accept={".png,.jpg,.jpeg,.webp"} single
+                        text={null} onText={()=>{}} textPlaceholder="(tylko plik)" />
+                    </div>
+                    <div className="grid-2">
+                      <div>
+                        <div className="field-label">Font marki (TTF, OTF)</div>
+                        <div className="upload-zone" onClick={() => {}}>
+                          <input type="file" accept={FONT_ACCEPTED} onChange={async e => setFontFile(await prepFiles(e.target.files))} style={{display:"block",opacity:0,position:"absolute"}} />
+                          <div className="upload-icon">🔤</div>
+                          <div className="upload-label">{fontFile[0]?.name || "Wgraj font TTF / OTF"}</div>
                         </div>
+                      </div>
+                      <div>
+                        <div className="field-label">Kolory HEX</div>
+                        <textarea className="field-textarea" style={{minHeight:80}} value={brandColors}
+                          onChange={e=>setBrandColors(e.target.value)}
+                          placeholder="#7C3AED, #1A1A2E..." />
                       </div>
                     </div>
                     <div>
-                      <div className="field-label">Kolory HEX</div>
-                      <textarea className="field-textarea" style={{minHeight:80}} value={brandColors}
-                        onChange={e=>setBrandColors(e.target.value)}
-                        placeholder="#7C3AED, #1A1A2E..." />
+                      <div className="field-label">Pozycja logo</div>
+                      <div className="pills">
+                        {Object.entries(LOGO_POSITIONS).map(([k,v]) => (
+                          <Pill key={k} active={logoPosition===k} onClick={()=>setLogoPosition(k)}>{v}</Pill>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                  <div>
-                    <div className="field-label">Pozycja logo</div>
-                    <div className="pills">
-                      {Object.entries(LOGO_POSITIONS).map(([k,v]) => (
-                        <Pill key={k} active={logoPosition===k} onClick={()=>setLogoPosition(k)}>{v}</Pill>
-                      ))}
+                    <div>
+                      <div className="field-label">Tekst na grafice (opcjonalnie)</div>
+                      <input className="field-input" value={designText} onChange={e=>setDesignText(e.target.value)}
+                        placeholder='np. "Wpadaj TU, do M1 Marki"' />
                     </div>
-                  </div>
-                  <div>
-                    <div className="field-label">Tekst na grafice (opcjonalnie)</div>
-                    <input className="field-input" value={designText} onChange={e=>setDesignText(e.target.value)}
-                      placeholder='np. "Wpadaj TU, do M1 Marki"' />
-                  </div>
-                  <div>
-                    <div className="field-label">Formaty</div>
-                    <div className="pills">
-                      {DESIGN_FORMATS.map(f => (
-                        <Pill key={f.key} active={selectedFormats.includes(f.key)}
-                          onClick={() => setSelectedFormats(p => p.includes(f.key) ? p.filter(x=>x!==f.key) : [...p,f.key])}>
-                          {f.label}
-                        </Pill>
-                      ))}
+                    <div>
+                      <div className="field-label">Formaty</div>
+                      <div className="pills">
+                        {DESIGN_FORMATS.map(f => (
+                          <Pill key={f.key} active={selectedFormats.includes(f.key)}
+                            onClick={() => setSelectedFormats(p => p.includes(f.key) ? p.filter(x=>x!==f.key) : [...p,f.key])}>
+                            {f.label}
+                          </Pill>
+                        ))}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -652,8 +651,8 @@ ${baseContent}`
                     </Pill>
                   </div>
                 </div>
+                </div>
               </div>
-              </>
             )}
 
             {/* NOTES */}
