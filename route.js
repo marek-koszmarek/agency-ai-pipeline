@@ -1,4 +1,4 @@
-import Anthropic from "anthropic";
+import Anthropic from "@anthropic-ai/sdk";
 import { RESEARCHER_PROMPT, CREATIVE_PROMPT, ANALYST_PROMPT, MODEL } from "@/lib/prompts";
 
 export const maxDuration = 300; // 5 minut max
