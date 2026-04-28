@@ -290,6 +290,12 @@ export default function Home() {
   };
 
   const runPipeline = async () => {
+    // Check total file size (base64 limit ~8MB to be safe)
+    const totalSize = getFiles().reduce((sum, f) => sum + (f.base64?.length || 0), 0);
+    if (totalSize > 8_000_000) {
+      setError("Pliki sa za duze (lacznie ponad 6MB). Uzyj mniejszych plikow lub wklej tekst bezposrednio.");
+      return;
+    }
     goNext("running"); setError("");
     try {
       const ok = await streamFromAPI({
