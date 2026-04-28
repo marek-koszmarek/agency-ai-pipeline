@@ -1011,10 +1011,7 @@ export default function Home() {
       </div>
     </div>
   );
-  ads:      { label: "Plan reklamowy",    emoji: "📊" },
-  design:   { label: "Grafiki / Design",  emoji: "🖼️" },
-  design:   { label: "Grafiki / Design",  emoji: "🖼️" },
-};
+}
 const SOCIAL_TYPES = { posts: "Posty", reels: "Pomysly na rolki" };
 const TONALITY_TYPES = {
   same: "Dopasowane do stylu klienta", creative: "Bardziej kreatywne",
