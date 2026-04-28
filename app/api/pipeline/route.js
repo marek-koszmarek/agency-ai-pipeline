@@ -60,7 +60,15 @@ function stripClarificationSection(text) {
 function sse(obj) { return `data: ${JSON.stringify(obj)}\n\n`; }
 
 export async function POST(req) {
-  const body = await req.json();
+  let body;
+  try {
+    body = await req.json();
+  } catch (e) {
+    return Response.json(
+      { error: `Blad parsowania danych: ${e.message}. Plik moze byc za duzy (limit 4MB).` },
+      { status: 400 }
+    );
+  }
   const {
     mode, brief, notes, files = [],
     socialType, socialFocus, socialProduct, socialTonality,
@@ -71,6 +79,7 @@ export async function POST(req) {
     runAnalyst = false,        // analyst now optional
     existingResearch = "",     // for social-from-strategy
     existingCreative = "",     // for social-from-strategy
+    researchBrand = false,
   } = body;
 
   const stream = new ReadableStream({
