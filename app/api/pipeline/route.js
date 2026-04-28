@@ -70,6 +70,12 @@ export async function POST(req) {
       const send = (obj) => controller.enqueue(enc.encode(sse(obj)));
 
       try {
+        // Basic validation
+        if (!brief && files.length === 0 && !existingResearch) {
+          send({ agent: "all", status: "error", message: "Brak briefu i plikow. Opisz projekt lub wgraj brief." });
+          return;
+        }
+
         // Parse files
         let parsedFiles = "";
         if (files.length > 0) {
@@ -115,7 +121,7 @@ export async function POST(req) {
             parsedFiles ? `\nDODATKOWE MATERIALY:\n${parsedFiles}` : "",
           ].filter(Boolean).join("\n");
           send({ agent: "creative", status: "running" });
-          const social = await callAgent(SOCIAL_PROMPT, socialInput, true);
+          const social = await callAgent(SOCIAL_PROMPT, socialInput, false); // Sonnet for speed
           send({ agent: "creative", status: "done", content: social });
           send({ agent: "all", status: "done" });
           return;
@@ -184,7 +190,9 @@ async function runCreative({ mode, brief, notes, socialContext, parsedFiles, res
     return;
   }
 
-  const isCreativeModel = true;
+  // Social uses Sonnet (fast, <60s) - Opus would timeout on Vercel Hobby
+  // Concept/Strategy use Opus (better quality, worth the wait)
+  const isCreativeModel = mode !== "social";
   const creativeSystemPrompt = mode === "social" ? SOCIAL_PROMPT : CREATIVE_PROMPT;
   send({ agent: "creative", status: "running" });
   const creative = await callAgent(creativeSystemPrompt, baseCtx, isCreativeModel);
