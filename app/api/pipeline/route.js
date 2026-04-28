@@ -142,9 +142,8 @@ export async function POST(req) {
           brief ? `\nBRIEF:\n${brief}` : "",
           notes ? `\nDODATKOWE WSKAZOWKI:\n${notes}` : "",
           socialContext ? `\nKONTEKST SOCIAL:\n${socialContext}` : "",
-          parsedFiles ? `\nDOSTARCZONE MATERIALY:\n${parsedFiles}` : "",
-        ].filter(Boolean).join("\n");
-
+          parsedFiles ? `\\nDOSTARCZONE MATERIALY:\\n${parsedFiles}` : `\\nUWAGA: Brak materialow od klienta. Przeprowadz research marki z briefu i wiedzy rynkowej. Jesli brakuje info - zadaj pytania w sekcji PYTANIA DO KLIENTA.`,
+        ].filter(Boolean).join("\\n");
         send({ agent: "researcher", status: "running" });
         const rawResearch = await callAgent(RESEARCHER_PROMPT, researcherInput);
 
