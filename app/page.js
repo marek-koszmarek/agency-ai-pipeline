@@ -495,8 +495,7 @@ export default function Home() {
                 <DropZone files={briefFiles} onFiles={setBriefFiles} label="Wgraj brief lub opis posta (TXT, PDF...)" hint="lub wpisz poniżej" />
                 <div className="input-area" style={{ marginTop: 10 }}>
                   <textarea className="msg-input" value={briefText} onChange={e => setBriefText(e.target.value)}
-                    placeholder={"Opisz post lub projekt:
-np. Post o letniej wyprzedaży, wesoły ton, dla centrum handlowego M1 Marki..."} />
+                    placeholder="Opisz post lub projekt: np. Post o letniej wyprzedaży, wesoły ton, dla centrum handlowego M1..." />
                 </div>
                 <div className="btn-row">
                   <BackBtn />
@@ -1502,8 +1501,7 @@ export default function Home() {
                 <DropZone files={briefFiles} onFiles={setBriefFiles} label="Wgraj brief lub opis posta (TXT, PDF...)" hint="lub wpisz poniżej" />
                 <div className="input-area" style={{ marginTop: 10 }}>
                   <textarea className="msg-input" value={briefText} onChange={e => setBriefText(e.target.value)}
-                    placeholder={"Opisz post lub projekt:
-np. Post o letniej wyprzedaży, wesoły ton, dla centrum handlowego M1 Marki..."} />
+                    placeholder="Opisz post lub projekt: np. Post o letniej wyprzedaży, wesoły ton, dla centrum handlowego M1..." />
                 </div>
                 <div className="btn-row">
                   <BackBtn />
