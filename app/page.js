@@ -1,5 +1,5 @@
 "use client";
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 
 // ── Stale ────────────────────────────────────────────────────────
 const MODES = {
@@ -18,9 +18,10 @@ const LOGO_POSITIONS = {
   top_right: "Gora prawy", top_left: "Gora lewy", center: "Centrum", roman: "Roman decyduje",
 };
 const AGENT_LABELS = {
-  researcher: { icon: "🔍", name: "Researcher" },
-  creative:   { icon: "🎨", name: "Creative" },
-  analyst:    { icon: "📊", name: "Analyst" },
+  researcher:     { icon: "🔍", name: "Researcher" },
+  creative:       { icon: "🎨", name: "Creative" },
+  analyst:        { icon: "📊", name: "Analyst" },
+  social_content: { icon: "📱", name: "Social" },
 };
 const STEPS_FOR_MODE = {
   concept: ["researcher","creative","analyst"],
@@ -202,6 +203,7 @@ export default function Home() {
   const [socialFromStrategyTonality, setSocialFromStrategyTonality] = useState(null);
 
   // Design state
+  const [researchBrand, setResearchBrand] = useState(false);
   const [wantsDesign, setWantsDesign] = useState(null);
   const [selectedPostForDesign, setSelectedPostForDesign] = useState("");
   const [hasBrandAssets, setHasBrandAssets] = useState(null);
@@ -212,6 +214,7 @@ export default function Home() {
   const [designTextChoice, setDesignTextChoice] = useState(null);
   const [designText, setDesignText] = useState("");
   const [selectedFormats, setSelectedFormats] = useState(DESIGN_FORMATS.map(f => f.key));
+  const [socialDone, setSocialDone] = useState(false);
   const [designVariants, setDesignVariants] = useState([]);
   const [designGenerating, setDesignGenerating] = useState(false);
   const [designError, setDesignError] = useState("");
@@ -221,13 +224,21 @@ export default function Home() {
   const setAgent = (id, s) => setAgentStatus(p => ({ ...p, [id]: s }));
   const setResult = (id, c) => setResults(p => ({ ...p, [id]: c }));
 
+  // Auto-scroll to bottom when new content appears
+  const messagesEndRef = useRef(null);
+  useEffect(() => {
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: "smooth", block: "end" });
+    }
+  }, [step, Object.keys(agentStatus).length, Object.keys(results).length, error, clarificationQs]);
+
   const resetAll = () => {
     setHistory(["mode"]); setMode(null); setSocialType(null); setSocialFocus(null);
     setSocialProduct(""); setSocialProductFiles([]); setSocialTonality(null);
     setBriefText(""); setBriefFiles([]); setExampleFiles([]); setProductFiles([]);
     setNotes(""); setAgentStatus({}); setResults({}); setDone(false); setError("");
     setClarificationQs(""); setClarificationAnswers(""); setResearchContent("");
-    setWantsAnalyst(null); setWantsSocial(null); setSocialFromStrategyType(null); setSocialFromStrategyTonality(null);
+    setResearchBrand(false); setSocialDone(false); setWantsAnalyst(null); setWantsSocial(null); setSocialFromStrategyType(null); setSocialFromStrategyTonality(null);
     setWantsDesign(null); setSelectedPostForDesign(""); setHasBrandAssets(null);
     setLogoFile([]); setFontFile([]); setBrandColors(""); setLogoPosition(null);
     setDesignTextChoice(null); setDesignText(""); setSelectedFormats(DESIGN_FORMATS.map(f => f.key));
@@ -269,6 +280,7 @@ export default function Home() {
             setClarificationQs(ev.questions); setResearchContent(ev.researchContent);
             goNext("clarification"); return false;
           }
+          if (ev.agent === "social_content" && ev.status === "done") setSocialDone(true);
           if (ev.agent === "all" && ev.status === "done") return true;
           if (ev.status === "error") throw new Error(ev.message);
         } catch (_) {}
@@ -284,7 +296,8 @@ export default function Home() {
         mode, brief: briefText, notes,
         socialType, socialFocus, socialProduct, socialTonality,
         files: getFiles(), phase: "full",
-        runAnalyst: false, // analyst always optional now
+        runAnalyst: false,
+        researchBrand, // analyst always optional now
       });
       if (ok) setDone(true);
     } catch (e) { setError(e.message); goBack(); }
@@ -317,7 +330,7 @@ export default function Home() {
   };
 
   const runSocialFromStrategy = async () => {
-    goNext("running_social"); setError("");
+    goNext("running_social"); setError(""); setSocialDone(false);
     try {
       await streamFromAPI({
         mode: "social_from_strategy", brief: briefText, files: getFiles(),
@@ -327,7 +340,8 @@ export default function Home() {
         existingResearch: results.researcher || "",
         existingCreative: results.creative || "",
       });
-    } catch (e) { setError(e.message); }
+      setSocialDone(true);
+    } catch (e) { setError(e.message); setSocialDone(true); }
   };
 
   // ── Design ───────────────────────────────────────────────────────
@@ -421,7 +435,7 @@ export default function Home() {
   // Which steps to show in progress bar
   const currentSteps = (() => {
     if (["running_analyst"].includes(step)) return ["analyst"];
-    if (["running_social"].includes(step)) return ["creative"];
+    if (["running_social"].includes(step)) return ["social_content"];
     return activeSteps;
   })();
 
@@ -435,7 +449,7 @@ export default function Home() {
         <div><div className="header-title">Luzny Roman</div><div className="header-sub">Twoj partner od kreacji i strategii</div></div>
       </div>
 
-      <div className="messages">
+      <div className="messages" ref={messagesEndRef}>
 
         {/* MODE */}
         <RomanMsg>
@@ -570,14 +584,15 @@ export default function Home() {
         {/* PRODUCTS */}
         {(isPast("products") || step === "products") && (
           <><RomanMsg>
-            Masz materialy o produktach lub uslugach klienta?
+            Masz materialy o produktach lub uslugach klienta? (katalogi, opisy, cenniki, briefy)
+            <div style={{ fontSize: 12, color: "var(--text-hint)", marginTop: 4 }}>Jesli nie - Roman przeprowadzi research samodzielnie</div>
             {step === "products" && (
               <>
                 <DropZone files={productFiles} onFiles={setProductFiles} label="Wgraj materialy (opcjonalnie)" hint="PDF, Excel, Word, TXT..." />
                 <div className="btn-row">
                   <BackBtn />
-                  <button className="btn" onClick={() => { setProductFiles([]); goNext("notes"); }}>Pominaj</button>
-                  <button className="btn btn-primary" onClick={() => goNext("notes")}>{productFiles.length > 0 ? "Dalej" : "Pominaj"}</button>
+                  <button className="btn" onClick={() => { setProductFiles([]); setResearchBrand(true); goNext("notes"); }}>Szukaj samodzielnie</button>
+                  <button className="btn btn-primary" onClick={() => { setResearchBrand(false); goNext("notes"); }}>{productFiles.length > 0 ? "Dalej" : "Pominaj"}</button>
                 </div>
               </>
             )}
@@ -643,17 +658,17 @@ export default function Home() {
             {error && <div className="error-box">Blad: {error}</div>}
             {Object.keys(results).length > 0 && (
               <ResultTabs mode={mode} results={results}
-                extraTabs={results["social_from_strategy"] ? [{ key: "social_from_strategy", label: "Posty/Rolki" }] : []} />
+                extraTabs={results["social_content"] ? [{ key: "social_content", label: "📱 Posty/Rolki" }] : []} />
             )}
           </RomanMsg>
         )}
 
         {/* DONE - RESULTS */}
-        {done && !isRunning && (
+        {(done || socialDone) && !isRunning && (
           <RomanMsg>
             Gotowe!
             <ResultTabs mode={mode} results={results}
-              extraTabs={results["social_from_strategy"] ? [{ key: "social_from_strategy", label: "Posty/Rolki" }] : []} />
+              extraTabs={results["social_content"] ? [{ key: "social_content", label: "📱 Posty/Rolki" }] : []} />
             <div className="btn-row" style={{ marginTop: 12 }}>
               <button className="btn" onClick={resetAll}>Nowy brief</button>
               <button className="btn btn-primary" onClick={downloadWord}>Pobierz Word (.docx)</button>
@@ -664,7 +679,7 @@ export default function Home() {
         {/* ── POST-PIPELINE OPTIONS ── */}
 
         {/* 1. Czy plan reklamowy? (concept/strategy/social) */}
-        {done && mode !== "ads" && wantsAnalyst === null && (
+        {(done || socialDone) && mode !== "ads" && wantsAnalyst === null && (
           <RomanMsg>
             Czy przygotowac plan reklamowy (budzety, benchmarki, konfiguracja analityki)?
             <div className="choices">
@@ -715,7 +730,10 @@ export default function Home() {
         )}
 
         {/* 3. Czy grafiki? */}
-        {done && showDesignFlow && wantsAnalyst !== null && (wantsSocial !== null || (mode !== "concept" && mode !== "strategy")) && wantsDesign === null && (
+        {done && showDesignFlow && wantsAnalyst !== null
+          && (wantsSocial !== null || (mode !== "concept" && mode !== "strategy"))
+          && (wantsSocial !== true || socialDone || wantsSocial === false)
+          && wantsDesign === null && (
           <RomanMsg>
             Czy chcesz zobaczyc propozycje wizualizacji graficznych?
             <div className="choices">
@@ -876,9 +894,23 @@ export default function Home() {
         {wantsDesign && (step === "design_generating" || designVariants.length > 0) && (
           <RomanMsg>
             {designGenerating && designVariants.length === 0 && (
-              <div className="empty-state"><span className="spin" style={{ fontSize: 24 }}>⟳</span><span>Generuje wizualizacje...</span></div>
+              <div className="empty-state">
+                <span className="spin" style={{ fontSize: 24 }}>⟳</span>
+                <div>
+                  <div>Generuje wizualizacje...</div>
+                  <div style={{ fontSize: 12, color: "var(--text-hint)", marginTop: 4 }}>To moze zajac 30-60 sekund</div>
+                </div>
+              </div>
             )}
-            {designError && <div className="error-box">Blad: {designError}</div>}
+            {!designGenerating && designVariants.length === 0 && !designError && step === "design_generating" && (
+              <div className="error-box">
+                Nie udalo sie wygenerowac wizualizacji. Sprawdz czy klucz GOOGLE_API_KEY jest ustawiony w Vercel.
+                <div style={{ marginTop: 8 }}>
+                  <button className="btn" onClick={() => runDesign(0, "")}>Sprobuj ponownie</button>
+                </div>
+              </div>
+            )}
+            {designError && <div className="error-box">Blad: {designError}<div style={{marginTop:8}}><button className="btn" onClick={() => {setDesignError(""); runDesign(0,"");}}>Sprobuj ponownie</button></div></div>}
             {designVariants.map((v, i) => (
               <DesignVariant key={i} variant={v} variantNum={i + 1} selectedFormats={selectedFormats} />
             ))}
@@ -910,6 +942,7 @@ export default function Home() {
           </RomanMsg>
         )}
 
+        <div ref={messagesEndRef} style={{ height: 1 }} />
       </div>
     </div>
   );
