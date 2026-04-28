@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { RESEARCHER_PROMPT, CREATIVE_PROMPT, SOCIAL_PROMPT, ANALYST_PROMPT, MODEL } from "@/lib/prompts";
+import { RESEARCHER_PROMPT, CREATIVE_PROMPT, SOCIAL_PROMPT, ANALYST_PROMPT, MODEL, MODEL_CREATIVE } from "@/lib/prompts";
 
 export const maxDuration = 300;
 
@@ -26,9 +26,10 @@ async function parseFile(name, base64, mimeType) {
   return `[Plik: ${name}]\n${buffer.toString("utf-8")}`;
 }
 
-async function callAgent(system, userMessage) {
+async function callAgent(system, userMessage, useCreativeModel = false) {
+  const model = useCreativeModel ? MODEL_CREATIVE : MODEL;
   const msg = await client.messages.create({
-    model: MODEL, max_tokens: 4096, system,
+    model, max_tokens: 4096, system,
     messages: [{ role: "user", content: userMessage }],
   });
   return msg.content[0].text;
@@ -56,12 +57,12 @@ export async function POST(req) {
     socialType, socialFocus, socialProduct, socialTonality,
     phase = "full",
     researchContent = "",
+    creativeContent = "",
     clarificationAnswers = "",
+    runAnalyst = false,        // analyst now optional
+    existingResearch = "",     // for social-from-strategy
+    existingCreative = "",     // for social-from-strategy
   } = body;
-
-  if (!brief && files.length === 0) {
-    return Response.json({ error: "Brak briefu." }, { status: 400 });
-  }
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -76,50 +77,83 @@ export async function POST(req) {
           parsedFiles = parsed.join("\n\n---\n\n");
         }
 
-        // Build social context
+        // Social context
         let socialContext = "";
-        if (mode === "social") {
+        if (mode === "social" || mode === "social_from_strategy") {
           socialContext = [
             socialType ? `Typ contentu: ${socialType === "posts" ? "Posty" : "Pomysly na rolki"}` : "",
-            socialFocus === "specific" ? "Fokus: konkretny produkt/usluga/wydarzenie" : "Fokus: ogolnie marka",
+            socialFocus === "specific" ? "Fokus: konkretny produkt/usluga/wydarzenie" : "",
             socialProduct ? `Opis produktu/wydarzenia:\n${socialProduct}` : "",
             socialTonality ? `Tonalnosc: ${socialTonality}` : "",
           ].filter(Boolean).join("\n");
         }
 
-        // ── PHASE: FULL (researcher + creative/analyst) ──────────
-        if (phase === "full") {
-          const researcherInput = [
-            `TRYB: ${mode}`,
-            brief ? `\nBRIEF:\n${brief}` : "",
-            notes ? `\nDODATKOWE WSKAZOWKI:\n${notes}` : "",
-            socialContext ? `\nKONTEKST SOCIAL:\n${socialContext}` : "",
-            parsedFiles ? `\nDOSTARCZONE MATERIALY:\n${parsedFiles}` : "",
+        // ── PHASE: ANALYST ONLY ──────────────────────────────────
+        if (phase === "analyst_only") {
+          send({ agent: "analyst", status: "running" });
+          const ctx = [
+            brief ? `BRIEF:\n${brief}` : "",
+            notes ? `\nWskazowki:\n${notes}` : "",
+            parsedFiles ? `\nMATERIALY:\n${parsedFiles}` : "",
+            researchContent ? `\nINSIGHTY:\n${researchContent}` : "",
+            creativeContent ? `\nKONCEPCJE KREATYWNE:\n${creativeContent}` : "",
           ].filter(Boolean).join("\n");
-
-          send({ agent: "researcher", status: "running" });
-          const rawResearch = await callAgent(RESEARCHER_PROMPT, researcherInput);
-
-          // Check for clarification questions
-          const questions = extractClarificationQuestions(rawResearch);
-          if (questions) {
-            const cleanResearch = stripClarificationSection(rawResearch);
-            send({ agent: "researcher", status: "done", content: cleanResearch });
-            send({ agent: "researcher", status: "needs_clarification", questions, researchContent: cleanResearch });
-            return;
-          }
-
-          send({ agent: "researcher", status: "done", content: rawResearch });
-          await runCreativeAndAnalyst({ mode, brief, notes, socialContext, parsedFiles, research: rawResearch, clarificationAnswers: "", send });
-
-        // ── PHASE: AFTER CLARIFICATION ───────────────────────────
-        } else if (phase === "after_clarification") {
-          const research = researchContent + (clarificationAnswers ? `\n\n## ODPOWIEDZI KLIENTA NA PYTANIA:\n${clarificationAnswers}` : "");
-          send({ agent: "researcher", status: "done", content: researchContent });
-          await runCreativeAndAnalyst({ mode, brief, notes, socialContext, parsedFiles, research, clarificationAnswers, send });
+          const analysis = await callAgent(ANALYST_PROMPT, ctx);
+          send({ agent: "analyst", status: "done", content: analysis });
+          send({ agent: "all", status: "done" });
+          return;
         }
 
+        // ── PHASE: SOCIAL FROM STRATEGY ──────────────────────────
+        if (phase === "social_from_strategy") {
+          const socialInput = [
+            `TRYB: Posty i rolki na podstawie istniejacego konceptu/strategii`,
+            socialContext ? `\nKONTEKST SOCIAL:\n${socialContext}` : "",
+            brief ? `\nBRIEF:\n${brief}` : "",
+            existingResearch ? `\nINSIGHTY OD RESEARCHERA:\n${existingResearch}` : "",
+            existingCreative ? `\nIST NIEJACY KONCEPT/STRATEGIA:\n${existingCreative}` : "",
+            parsedFiles ? `\nDODATKOWE MATERIALY:\n${parsedFiles}` : "",
+          ].filter(Boolean).join("\n");
+          send({ agent: "creative", status: "running" });
+          const social = await callAgent(SOCIAL_PROMPT, socialInput, true);
+          send({ agent: "creative", status: "done", content: social });
+          send({ agent: "all", status: "done" });
+          return;
+        }
+
+        // ── PHASE: AFTER CLARIFICATION ───────────────────────────
+        if (phase === "after_clarification") {
+          const research = researchContent + (clarificationAnswers ? `\n\n## ODPOWIEDZI KLIENTA:\n${clarificationAnswers}` : "");
+          send({ agent: "researcher", status: "done", content: researchContent });
+          await runCreative({ mode, brief, notes, socialContext, parsedFiles, research, send, runAnalyst });
+          send({ agent: "all", status: "done" });
+          return;
+        }
+
+        // ── PHASE: FULL ──────────────────────────────────────────
+        const researcherInput = [
+          `TRYB: ${mode}`,
+          brief ? `\nBRIEF:\n${brief}` : "",
+          notes ? `\nDODATKOWE WSKAZOWKI:\n${notes}` : "",
+          socialContext ? `\nKONTEKST SOCIAL:\n${socialContext}` : "",
+          parsedFiles ? `\nDOSTARCZONE MATERIALY:\n${parsedFiles}` : "",
+        ].filter(Boolean).join("\n");
+
+        send({ agent: "researcher", status: "running" });
+        const rawResearch = await callAgent(RESEARCHER_PROMPT, researcherInput);
+
+        const questions = extractClarificationQuestions(rawResearch);
+        if (questions) {
+          const cleanResearch = stripClarificationSection(rawResearch);
+          send({ agent: "researcher", status: "done", content: cleanResearch });
+          send({ agent: "researcher", status: "needs_clarification", questions, researchContent: cleanResearch });
+          return;
+        }
+
+        send({ agent: "researcher", status: "done", content: rawResearch });
+        await runCreative({ mode, brief, notes, socialContext, parsedFiles, research: rawResearch, send, runAnalyst });
         send({ agent: "all", status: "done" });
+
       } catch (err) {
         send({ agent: "all", status: "error", message: err.message || "Blad API" });
       } finally {
@@ -133,8 +167,8 @@ export async function POST(req) {
   });
 }
 
-async function runCreativeAndAnalyst({ mode, brief, notes, socialContext, parsedFiles, research, send }) {
-  const baseContext = [
+async function runCreative({ mode, brief, notes, socialContext, parsedFiles, research, send, runAnalyst }) {
+  const baseCtx = [
     brief ? `BRIEF:\n${brief}` : "",
     notes ? `\nWskazowki:\n${notes}` : "",
     socialContext ? `\nKONTEKST SOCIAL:\n${socialContext}` : "",
@@ -143,20 +177,24 @@ async function runCreativeAndAnalyst({ mode, brief, notes, socialContext, parsed
   ].filter(Boolean).join("\n");
 
   if (mode === "ads") {
+    // Ads: only analyst (always run)
     send({ agent: "analyst", status: "running" });
-    const analysis = await callAgent(ANALYST_PROMPT, baseContext);
+    const analysis = await callAgent(ANALYST_PROMPT, baseCtx);
     send({ agent: "analyst", status: "done", content: analysis });
-  } else {
-    const creativePrompt = mode === "social" ? SOCIAL_PROMPT : CREATIVE_PROMPT;
-    send({ agent: "creative", status: "running" });
-    const creative = await callAgent(creativePrompt, baseContext);
-    send({ agent: "creative", status: "done", content: creative });
+    return;
+  }
 
-    if (mode === "concept" || mode === "strategy") {
-      send({ agent: "analyst", status: "running" });
-      const analystCtx = baseContext + `\n\nKONCEPCJE KREATYWNE:\n${creative}`;
-      const analysis = await callAgent(ANALYST_PROMPT, analystCtx);
-      send({ agent: "analyst", status: "done", content: analysis });
-    }
+  const isCreativeModel = true;
+  const creativeSystemPrompt = mode === "social" ? SOCIAL_PROMPT : CREATIVE_PROMPT;
+  send({ agent: "creative", status: "running" });
+  const creative = await callAgent(creativeSystemPrompt, baseCtx, isCreativeModel);
+  send({ agent: "creative", status: "done", content: creative });
+
+  // Analyst only if explicitly requested
+  if (runAnalyst) {
+    send({ agent: "analyst", status: "running" });
+    const analystCtx = baseCtx + `\n\nKONCEPCJE KREATYWNE:\n${creative}`;
+    const analysis = await callAgent(ANALYST_PROMPT, analystCtx);
+    send({ agent: "analyst", status: "done", content: analysis });
   }
 }
