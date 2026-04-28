@@ -300,7 +300,7 @@ export default function Home() {
         researchBrand, // analyst always optional now
       });
       if (ok) setDone(true);
-    } catch (e) { setError(e.message); goBack(); }
+    } catch (e) { console.error("Pipeline error:", e); setError(e.message || "Blad polaczenia. Sprawdz konsole przegladarki (F12)."); }
   };
 
   const runAfterClarification = async () => {
@@ -313,7 +313,7 @@ export default function Home() {
         researchContent, clarificationAnswers, runAnalyst: false,
       });
       if (ok) setDone(true);
-    } catch (e) { setError(e.message); goBack(); }
+    } catch (e) { console.error("AfterClarification error:", e); setError(e.message || "Blad polaczenia. Sprawdz konsole przegladarki (F12)."); }
   };
 
   const runAnalystNow = async () => {
@@ -348,7 +348,10 @@ export default function Home() {
   const runDesign = async (iteration = 0, feedback = "") => {
     setDesignGenerating(true); setDesignError(""); setDesignVariants([]);
     try {
-      const concept = results.creative || results.researcher || briefText;
+      // Use social content for social modes, creative concept for concept/strategy
+    const concept = (mode === "social" || wantsSocial)
+      ? (results["social_content"] || results.creative || results.researcher || briefText)
+      : (results.creative || results.researcher || briefText);
       const colors = brandColors.split(/[,\s]+/).filter(Boolean);
       const actualText = designTextChoice === "custom" ? designText : "";
 
@@ -611,6 +614,7 @@ export default function Home() {
                   <textarea className="msg-input" value={notes} onChange={e => setNotes(e.target.value)}
                     placeholder="np. Unikamy humoru, target to kobiety 35+..." style={{ minHeight: 60 }} />
                 </div>
+                {error && <div className="error-box" style={{marginBottom:8}}>⚠️ {error}</div>}
                 <div className="btn-row"><BackBtn /><button className="btn btn-primary" onClick={runPipeline}>Dzialaj Romek 🚀</button></div>
               </>
             )}
@@ -668,7 +672,10 @@ export default function Home() {
           <RomanMsg>
             Gotowe!
             <ResultTabs mode={mode} results={results}
-              extraTabs={results["social_content"] ? [{ key: "social_content", label: "📱 Posty/Rolki" }] : []} />
+              extraTabs={[
+                ...(results["social_content"] ? [{ key: "social_content", label: "📱 Posty/Rolki" }] : []),
+                ...(results["analyst"] && !STEPS_FOR_MODE[mode]?.includes("analyst") ? [{ key: "analyst", label: "📊 Plan mediowy" }] : []),
+              ]} />
             <div className="btn-row" style={{ marginTop: 12 }}>
               <button className="btn" onClick={resetAll}>Nowy brief</button>
               <button className="btn btn-primary" onClick={downloadWord}>Pobierz Word (.docx)</button>
@@ -737,7 +744,15 @@ export default function Home() {
           <RomanMsg>
             Czy chcesz zobaczyc propozycje wizualizacji graficznych?
             <div className="choices">
-              <button className="choice-btn" onClick={() => { setWantsDesign(true); goNext("design_post_select"); }}>Tak, generuj wizualizacje</button>
+              <button className="choice-btn" onClick={() => {
+                setWantsDesign(true);
+                // Skip post selection for concept/strategy without social posts
+                if (mode === "social" || (wantsSocial && results["social_content"])) {
+                  goNext("design_post_select");
+                } else {
+                  goNext("design_assets");
+                }
+              }}>Tak, generuj wizualizacje</button>
               <button className="choice-btn" onClick={() => setWantsDesign(false)}>Nie, dziekuje</button>
             </div>
           </RomanMsg>
@@ -747,7 +762,7 @@ export default function Home() {
         {/* DESIGN FLOW */}
 
         {/* Post selection (for social) */}
-        {wantsDesign && (isPast("design_post_select") || step === "design_post_select") && (results.creative || results["social_from_strategy"]) && (mode === "social" || wantsSocial) && (
+        {wantsDesign && (isPast("design_post_select") || step === "design_post_select") && (mode === "social" || (wantsSocial && results["social_content"])) && (
           <><RomanMsg>
             Grafika bedzie odnosic sie do konkretnego posta. Opisz lub wklej tresc posta do ktorego chcesz grafike.
             {step === "design_post_select" && (
@@ -910,7 +925,16 @@ export default function Home() {
                 </div>
               </div>
             )}
-            {designError && <div className="error-box">Blad: {designError}<div style={{marginTop:8}}><button className="btn" onClick={() => {setDesignError(""); runDesign(0,"");}}>Sprobuj ponownie</button></div></div>}
+            {designError && (
+              <div className="error-box">
+                <strong>Blad generowania grafiki:</strong><br/>{designError}
+                <br/><br/>Mozliwe przyczyny: brak klucza GOOGLE_API_KEY w Vercel, lub chwilowy blad Gemini API.
+                <div style={{marginTop:10, display:"flex", gap:8}}>
+                  <button className="btn" onClick={() => {setDesignError(""); runDesign(0,"");}}>Sprobuj ponownie</button>
+                  <button className="btn" onClick={goBack}>Wróc</button>
+                </div>
+              </div>
+            )}
             {designVariants.map((v, i) => (
               <DesignVariant key={i} variant={v} variantNum={i + 1} selectedFormats={selectedFormats} />
             ))}
