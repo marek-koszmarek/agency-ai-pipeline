@@ -651,7 +651,6 @@ ${baseContent}`
                     </Pill>
                   </div>
                 </div>
-                </div>
               </div>
             )}
 
