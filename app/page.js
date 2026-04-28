@@ -1,37 +1,44 @@
 "use client";
 import { useState, useRef, useCallback } from "react";
 
+// ── Stale ────────────────────────────────────────────────────────
 const MODES = {
   concept:  { label: "Koncept kreatywny", emoji: "💡" },
   strategy: { label: "Strategia",         emoji: "🎯" },
   social:   { label: "Posty i rolki",     emoji: "📱" },
   ads:      { label: "Plan reklamowy",    emoji: "📊" },
 };
-
-const SOCIAL_TYPES   = { posts: "Posty", reels: "Pomysły na rolki" };
+const SOCIAL_TYPES = { posts: "Posty", reels: "Pomysly na rolki" };
 const TONALITY_TYPES = {
-  same:      "Dopasowane do dotychczasowego stylu",
-  creative:  "Bardziej kreatywne",
-  funny:     "Bardziej humorystyczne",
-  product:   "Bardziej produktowe",
-  lifestyle: "Bardziej lifestylowe",
+  same: "Dopasowane do stylu klienta", creative: "Bardziej kreatywne",
+  funny: "Bardziej humorystyczne", product: "Bardziej produktowe", lifestyle: "Bardziej lifestylowe",
 };
-
+const LOGO_POSITIONS = {
+  bottom_right: "Dol prawy", bottom_left: "Dol lewy", bottom_center: "Dol srodek",
+  top_right: "Gora prawy", top_left: "Gora lewy", center: "Centrum", roman: "Roman decyduje",
+};
 const AGENT_LABELS = {
   researcher: { icon: "🔍", name: "Researcher" },
   creative:   { icon: "🎨", name: "Creative" },
   analyst:    { icon: "📊", name: "Analyst" },
 };
-
 const STEPS_FOR_MODE = {
-  concept:  ["researcher","creative","analyst"],
+  concept: ["researcher","creative","analyst"],
   strategy: ["researcher","creative","analyst"],
-  social:   ["researcher","creative"],
-  ads:      ["researcher","analyst"],
+  social: ["researcher","creative"],
+  ads: ["researcher","analyst"],
 };
-
+const DESIGN_FORMATS = [
+  { key: "instagram_feed",   label: "IG Feed 4:5" },
+  { key: "instagram_story",  label: "IG Story 9:16" },
+  { key: "instagram_square", label: "IG Square 1:1" },
+  { key: "facebook_feed",    label: "FB Feed 4:5" },
+];
 const ACCEPTED = ".txt,.md,.pdf,.xlsx,.xls,.csv,.doc,.docx";
+const IMG_ACCEPTED = ".png,.jpg,.jpeg,.webp";
+const FONT_ACCEPTED = ".ttf,.otf,.woff,.woff2";
 
+// ── Helpers ───────────────────────────────────────────────────────
 function readAsBase64(file) {
   return new Promise((res, rej) => {
     const r = new FileReader();
@@ -40,20 +47,20 @@ function readAsBase64(file) {
     r.readAsDataURL(file);
   });
 }
-
-async function prepFiles(fileList) {
-  return Promise.all(Array.from(fileList).map(async (f) => ({
+async function prepFiles(fl) {
+  return Promise.all(Array.from(fl).map(async (f) => ({
     name: f.name, mimeType: f.type, base64: await readAsBase64(f),
   })));
 }
 
-function DropZone({ files, onFiles, label, hint }) {
+function DropZone({ files, onFiles, label, hint, accept = ACCEPTED, single = false }) {
   const [drag, setDrag] = useState(false);
   const ref = useRef();
   const add = useCallback(async (fl) => {
     const prep = await prepFiles(fl);
-    onFiles((p) => { const n = new Set(p.map((f) => f.name)); return [...p, ...prep.filter((f) => !n.has(f.name))]; });
-  }, [onFiles]);
+    if (single) { onFiles(prep.slice(0, 1)); return; }
+    onFiles((p) => { const n = new Set((Array.isArray(p) ? p : []).map(f => f.name)); return [...(Array.isArray(p) ? p : []), ...prep.filter(f => !n.has(f.name))]; });
+  }, [onFiles, single]);
   return (
     <div>
       <div className={`upload-zone${drag ? " drag-over" : ""}`}
@@ -61,17 +68,17 @@ function DropZone({ files, onFiles, label, hint }) {
         onDragOver={(e) => { e.preventDefault(); setDrag(true); }}
         onDragLeave={() => setDrag(false)}
         onDrop={(e) => { e.preventDefault(); setDrag(false); add(e.dataTransfer.files); }}>
-        <input ref={ref} type="file" accept={ACCEPTED} multiple onChange={(e) => add(e.target.files)} />
+        <input ref={ref} type="file" accept={accept} multiple={!single} onChange={(e) => add(e.target.files)} />
         <div style={{ fontSize: 20, marginBottom: 6 }}>📎</div>
         <div style={{ fontWeight: 500 }}>{label}</div>
         {hint && <div style={{ fontSize: 12, marginTop: 4, color: "var(--text-hint)" }}>{hint}</div>}
       </div>
-      {files.length > 0 && (
+      {(Array.isArray(files) ? files : []).length > 0 && (
         <div className="file-chips">
-          {files.map((f) => (
+          {(Array.isArray(files) ? files : []).map((f) => (
             <span key={f.name} className="file-chip">
               {f.name}
-              <button onClick={() => onFiles((p) => p.filter((x) => x.name !== f.name))}>x</button>
+              <button onClick={() => onFiles(Array.isArray(files) ? files.filter(x => x.name !== f.name) : [])}>x</button>
             </span>
           ))}
         </div>
@@ -97,44 +104,82 @@ function UserMsg({ children }) {
   );
 }
 
-function ResultTabs({ mode, results }) {
-  const tabs = STEPS_FOR_MODE[mode] || ["researcher"];
-  const [active, setActive] = useState(tabs[0]);
+function ResultTabs({ mode, results, extraTabs = [] }) {
+  const baseTabs = (STEPS_FOR_MODE[mode] || ["researcher"]).filter(t => results[t]);
+  const allTabs = [...baseTabs, ...extraTabs.filter(t => results[t.key])];
+  const [active, setActive] = useState(allTabs[0]?.key || allTabs[0]);
   const labels = { researcher: "Research", creative: "Kreacja", analyst: "Plan mediowy" };
-  const content = results[active] || "";
+  const getContent = (t) => typeof t === "string" ? results[t] : results[t.key];
+  const getLabel = (t) => typeof t === "string" ? (labels[t] || t) : t.label;
+  const getKey = (t) => typeof t === "string" ? t : t.key;
   return (
     <div>
       <div className="tabs">
-        {tabs.map((t) => (
-          <button key={t} className={`tab-btn${active === t ? " active" : ""}`} onClick={() => setActive(t)}>
-            {AGENT_LABELS[t]?.icon} {labels[t]}
-            {results[t] && <span style={{ marginLeft: 4, color: "var(--success-text)", fontSize: 11 }}>✓</span>}
+        {allTabs.map((t) => (
+          <button key={getKey(t)} className={`tab-btn${active === getKey(t) ? " active" : ""}`} onClick={() => setActive(getKey(t))}>
+            {typeof t === "string" ? (AGENT_LABELS[t]?.icon || "") : ""} {getLabel(t)}
+            {getContent(t) && <span style={{ marginLeft: 4, color: "var(--success-text)", fontSize: 11 }}>✓</span>}
           </button>
         ))}
       </div>
       <div className="result-box">
-        {content
-          ? <div className="result-text">{content}</div>
-          : <div className="empty-state"><span className="spin">⟳</span> Oczekiwanie...</div>}
+        {getContent(active)
+          ? <div className="result-text">{getContent(active)}</div>
+          : <div className="empty-state"><span className="spin">⟳</span></div>}
       </div>
     </div>
   );
 }
 
+function DesignVariant({ variant, variantNum, selectedFormats }) {
+  const [activeFormat, setActiveFormat] = useState(selectedFormats[0]);
+  const imgData = variant.formats[activeFormat];
+  const fmt = DESIGN_FORMATS.find(f => f.key === activeFormat);
+  const dl = () => {
+    const a = document.createElement("a");
+    a.href = `data:image/png;base64,${imgData}`;
+    a.download = `roman_w${variantNum}_${activeFormat}.png`;
+    a.click();
+  };
+  return (
+    <div style={{ border: "1px solid var(--border)", borderRadius: 12, overflow: "hidden", marginBottom: 12 }}>
+      <div style={{ padding: "10px 14px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <strong style={{ fontSize: 14 }}>Wariant {variantNum}</strong>
+        <button className="btn" style={{ fontSize: 12, padding: "4px 10px" }} onClick={dl}>Pobierz PNG</button>
+      </div>
+      <div style={{ display: "flex", gap: 4, padding: "8px 12px", flexWrap: "wrap", borderBottom: "1px solid var(--border)" }}>
+        {selectedFormats.map(fk => {
+          const f = DESIGN_FORMATS.find(x => x.key === fk);
+          return (
+            <button key={fk} className={`choice-btn${activeFormat === fk ? " selected" : ""}`}
+              style={{ fontSize: 12, padding: "4px 10px" }} onClick={() => setActiveFormat(fk)}>{f?.label}</button>
+          );
+        })}
+      </div>
+      {imgData
+        ? <img src={`data:image/png;base64,${imgData}`} alt={`Wariant ${variantNum}`}
+            style={{ width: "100%", display: "block", maxHeight: 400, objectFit: "contain", background: "#f5f5f5" }} />
+        : <div className="empty-state" style={{ minHeight: 200 }}>Generowanie...</div>
+      }
+    </div>
+  );
+}
+
+// ── Main ──────────────────────────────────────────────────────────
 export default function Home() {
-  // History stack — back button pops last entry
   const [history, setHistory] = useState(["mode"]);
   const step = history[history.length - 1];
-  const goNext  = (s) => setHistory((p) => [...p, s]);
-  const goBack  = () => setHistory((p) => p.length > 1 ? p.slice(0, -1) : p);
+  const goNext = (s) => setHistory(p => [...p, s]);
+  const goBack = () => setHistory(p => p.length > 1 ? p.slice(0, -1) : p);
+  const isPast = (s) => { const i = history.indexOf(s); return i !== -1 && i < history.length - 1; };
 
-  // Form state
+  // Brief state
   const [mode, setMode] = useState(null);
-  const [socialType, setSocialType] = useState(null);        // posts | reels
-  const [socialFocus, setSocialFocus] = useState(null);      // specific | general
-  const [socialProduct, setSocialProduct] = useState("");    // text about product/event
+  const [socialType, setSocialType] = useState(null);
+  const [socialFocus, setSocialFocus] = useState(null);
+  const [socialProduct, setSocialProduct] = useState("");
   const [socialProductFiles, setSocialProductFiles] = useState([]);
-  const [socialTonality, setSocialTonality] = useState(null); // same | creative | funny | product | lifestyle
+  const [socialTonality, setSocialTonality] = useState(null);
   const [briefText, setBriefText] = useState("");
   const [briefFiles, setBriefFiles] = useState([]);
   const [exampleFiles, setExampleFiles] = useState([]);
@@ -150,46 +195,58 @@ export default function Home() {
   const [clarificationAnswers, setClarificationAnswers] = useState("");
   const [researchContent, setResearchContent] = useState("");
 
-  const setAgent = (id, s) => setAgentStatus((p) => ({ ...p, [id]: s }));
-  const setResult = (id, c) => setResults((p) => ({ ...p, [id]: c }));
+  // Post-pipeline options
+  const [wantsAnalyst, setWantsAnalyst] = useState(null);
+  const [wantsSocial, setWantsSocial] = useState(null); // after concept/strategy
+  const [socialFromStrategyType, setSocialFromStrategyType] = useState(null);
+  const [socialFromStrategyTonality, setSocialFromStrategyTonality] = useState(null);
+
+  // Design state
+  const [wantsDesign, setWantsDesign] = useState(null);
+  const [selectedPostForDesign, setSelectedPostForDesign] = useState("");
+  const [hasBrandAssets, setHasBrandAssets] = useState(null);
+  const [logoFile, setLogoFile] = useState([]);
+  const [fontFile, setFontFile] = useState([]);
+  const [brandColors, setBrandColors] = useState("");
+  const [logoPosition, setLogoPosition] = useState(null);
+  const [designTextChoice, setDesignTextChoice] = useState(null);
+  const [designText, setDesignText] = useState("");
+  const [selectedFormats, setSelectedFormats] = useState(DESIGN_FORMATS.map(f => f.key));
+  const [designVariants, setDesignVariants] = useState([]);
+  const [designGenerating, setDesignGenerating] = useState(false);
+  const [designError, setDesignError] = useState("");
+  const [feedbackText, setFeedbackText] = useState("");
+  const [designIteration, setDesignIteration] = useState(0);
+
+  const setAgent = (id, s) => setAgentStatus(p => ({ ...p, [id]: s }));
+  const setResult = (id, c) => setResults(p => ({ ...p, [id]: c }));
 
   const resetAll = () => {
     setHistory(["mode"]); setMode(null); setSocialType(null); setSocialFocus(null);
     setSocialProduct(""); setSocialProductFiles([]); setSocialTonality(null);
     setBriefText(""); setBriefFiles([]); setExampleFiles([]); setProductFiles([]);
-    setNotes(""); setAgentStatus({}); setResults({}); setDone(false);
-    setError(""); setClarificationQs(""); setClarificationAnswers(""); setResearchContent("");
+    setNotes(""); setAgentStatus({}); setResults({}); setDone(false); setError("");
+    setClarificationQs(""); setClarificationAnswers(""); setResearchContent("");
+    setWantsAnalyst(null); setWantsSocial(null); setSocialFromStrategyType(null); setSocialFromStrategyTonality(null);
+    setWantsDesign(null); setSelectedPostForDesign(""); setHasBrandAssets(null);
+    setLogoFile([]); setFontFile([]); setBrandColors(""); setLogoPosition(null);
+    setDesignTextChoice(null); setDesignText(""); setSelectedFormats(DESIGN_FORMATS.map(f => f.key));
+    setDesignVariants([]); setDesignGenerating(false); setDesignError(""); setFeedbackText(""); setDesignIteration(0);
   };
 
-  const buildPayload = (phase = "full", extra = {}) => {
-    const allFiles = [
-      ...briefFiles,
-      ...socialProductFiles,
-      ...(mode === "social" ? exampleFiles : []),
-      ...productFiles,
-    ];
-    return {
-      mode,
-      brief: briefText,
-      notes,
-      socialType,
-      socialFocus,
-      socialProduct,
-      socialTonality,
-      files: allFiles,
-      phase,
-      ...extra,
-    };
-  };
+  const getFiles = () => [
+    ...briefFiles,
+    ...socialProductFiles,
+    ...(mode === "social" ? exampleFiles : []),
+    ...productFiles,
+  ];
 
-  const streamPipeline = async (payload) => {
-    const res = await fetch("/api/pipeline", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+  // ── Stream helper ────────────────────────────────────────────────
+  const streamFromAPI = async (payload, path = "/api/pipeline") => {
+    const res = await fetch(path, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
     });
-    if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || "Błąd serwera"); }
-
+    if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || "Blad serwera"); }
     const reader = res.body.getReader();
     const dec = new TextDecoder();
     let buf = "";
@@ -209,54 +266,137 @@ export default function Home() {
             if (ev.content) setResult(ev.agent, ev.content);
           }
           if (ev.status === "needs_clarification") {
-            setClarificationQs(ev.questions);
-            setResearchContent(ev.researchContent);
-            goNext("clarification");
-            return; // pause — user must answer
+            setClarificationQs(ev.questions); setResearchContent(ev.researchContent);
+            goNext("clarification"); return false;
           }
-          if (ev.agent === "all" && ev.status === "done") { setDone(true); }
+          if (ev.agent === "all" && ev.status === "done") return true;
           if (ev.status === "error") throw new Error(ev.message);
         } catch (_) {}
       }
     }
+    return true;
   };
 
   const runPipeline = async () => {
-    goNext("running");
-    setError("");
-    try { await streamPipeline(buildPayload("full")); }
-    catch (e) { setError(e.message || "Błąd połączenia."); goBack(); }
-  };
-
-  const resumeAfterClarification = async () => {
-    goNext("running");
-    setError("");
+    goNext("running"); setError("");
     try {
-      await streamPipeline(buildPayload("after_clarification", {
-        researchContent,
-        clarificationAnswers,
-      }));
-    } catch (e) { setError(e.message || "Błąd połączenia."); goBack(); }
+      const ok = await streamFromAPI({
+        mode, brief: briefText, notes,
+        socialType, socialFocus, socialProduct, socialTonality,
+        files: getFiles(), phase: "full",
+        runAnalyst: false, // analyst always optional now
+      });
+      if (ok) setDone(true);
+    } catch (e) { setError(e.message); goBack(); }
   };
 
-  const buildReport = () => {
-    const now = new Date().toLocaleString("pl-PL");
-    const parts = [`# RAPORT - ${MODES[mode]?.label}\nData: ${now}\n\nBRIEF:\n${briefText}`];
-    if (results.researcher) parts.push(`\nRESEARCH:\n${results.researcher}`);
-    if (results.creative) parts.push(`\nKREACJA:\n${results.creative}`);
-    if (results.analyst) parts.push(`\nPLAN MEDIOWY:\n${results.analyst}`);
-    return parts.join("\n\n" + "=".repeat(60) + "\n\n");
+  const runAfterClarification = async () => {
+    goNext("running"); setError("");
+    try {
+      const ok = await streamFromAPI({
+        mode, brief: briefText, notes,
+        socialType, socialFocus, socialProduct, socialTonality,
+        files: getFiles(), phase: "after_clarification",
+        researchContent, clarificationAnswers, runAnalyst: false,
+      });
+      if (ok) setDone(true);
+    } catch (e) { setError(e.message); goBack(); }
   };
 
-  const download = () => {
-    const a = Object.assign(document.createElement("a"), {
-      href: URL.createObjectURL(new Blob([buildReport()], { type: "text/markdown" })),
-      download: `roman_${mode}_${new Date().toISOString().slice(0,10)}.md`,
+  const runAnalystNow = async () => {
+    goNext("running_analyst"); setError(""); setWantsAnalyst(true);
+    setAgent("analyst", "running");
+    try {
+      await streamFromAPI({
+        phase: "analyst_only",
+        brief: briefText, files: getFiles(),
+        researchContent: results.researcher || "",
+        creativeContent: results.creative || "",
+      });
+    } catch (e) { setError(e.message); }
+  };
+
+  const runSocialFromStrategy = async () => {
+    goNext("running_social"); setError("");
+    try {
+      await streamFromAPI({
+        mode: "social_from_strategy", brief: briefText, files: getFiles(),
+        phase: "social_from_strategy",
+        socialType: socialFromStrategyType,
+        socialTonality: socialFromStrategyTonality,
+        existingResearch: results.researcher || "",
+        existingCreative: results.creative || "",
+      });
+    } catch (e) { setError(e.message); }
+  };
+
+  // ── Design ───────────────────────────────────────────────────────
+  const runDesign = async (iteration = 0, feedback = "") => {
+    setDesignGenerating(true); setDesignError(""); setDesignVariants([]);
+    try {
+      const concept = results.creative || results.researcher || briefText;
+      const colors = brandColors.split(/[,\s]+/).filter(Boolean);
+      const actualText = designTextChoice === "custom" ? designText : "";
+
+      const res = await fetch("/api/design", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          concept: concept.slice(0, 2000),
+          postContent: selectedPostForDesign,
+          brandColors: colors,
+          logoBase64: logoFile[0]?.base64 || null,
+          fontBase64: fontFile[0]?.base64 || null,
+          textOnImage: actualText || null,
+          logoPosition: logoPosition || "bottom_right",
+          feedbackIteration: iteration,
+          feedbackNotes: feedback,
+          selectedFormats,
+        }),
+      });
+      const reader = res.body.getReader();
+      const dec = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { done: sd, value } = await reader.read();
+        if (sd) break;
+        buf += dec.decode(value, { stream: true });
+        const parts = buf.split("\n\n"); buf = parts.pop();
+        for (const part of parts) {
+          const line = part.replace(/^data: /, "").trim();
+          if (!line) continue;
+          try {
+            const ev = JSON.parse(line);
+            if (ev.status === "variant_done") setDesignVariants(p => [...p, ev.data]);
+            if (ev.status === "error") throw new Error(ev.message);
+          } catch (_) {}
+        }
+      }
+      setDesignIteration(iteration + 1);
+    } catch (e) { setDesignError(e.message); }
+    finally { setDesignGenerating(false); }
+  };
+
+  // ── Word download ────────────────────────────────────────────────
+  const downloadWord = async () => {
+    const sections = [];
+    if (results.researcher) sections.push({ heading: "Research i Insighty", content: results.researcher });
+    if (results.creative) sections.push({ heading: "Koncepcje Kreatywne", content: results.creative });
+    if (results["social_from_strategy"]) sections.push({ heading: "Posty i Rolki", content: results["social_from_strategy"] });
+    if (results.analyst) sections.push({ heading: "Plan Reklamowy", content: results.analyst });
+
+    const res = await fetch("/api/export", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: `Roman - ${MODES[mode]?.label || "Raport"}`, sections }),
     });
+    const blob = await res.blob();
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `roman_${mode}_${new Date().toISOString().slice(0,10)}.docx`;
     a.click();
   };
 
-  const activeSteps = mode ? STEPS_FOR_MODE[mode] : [];
+  // ── UI helpers ───────────────────────────────────────────────────
+  const activeSteps = mode ? (STEPS_FOR_MODE[mode] || []) : [];
   const stepClass = (id) => {
     const s = agentStatus[id];
     if (s === "running") return "progress-step running";
@@ -269,306 +409,497 @@ export default function Home() {
     if (s === "done") return "Gotowe";
     return "Oczekuje";
   };
-
-  const BackBtn = ({ label = "Wróć" }) => (
-    <button className="btn" style={{ marginRight: "auto" }} onClick={goBack}>← {label}</button>
+  const BackBtn = () => (
+    <button className="btn" style={{ marginRight: "auto" }} onClick={goBack}>← Wróc</button>
   );
 
-  const isPast = (s) => {
-    const idx = history.indexOf(s);
-    return idx !== -1 && idx < history.length - 1;
-  };
+  // Which steps to show in progress bar
+  const currentSteps = (() => {
+    if (["running_analyst"].includes(step)) return ["analyst"];
+    if (["running_social"].includes(step)) return ["creative"];
+    return activeSteps;
+  })();
+
+  const isRunning = step === "running" || step === "running_analyst" || step === "running_social";
+  const showDesignFlow = done && (mode === "concept" || mode === "strategy" || mode === "social");
 
   return (
     <div className="app">
       <div className="header">
         <div className="header-avatar">R</div>
-        <div>
-          <div className="header-title">Luzny Roman</div>
-          <div className="header-sub">Twój partner od kreacji i strategii</div>
-        </div>
+        <div><div className="header-title">Luzny Roman</div><div className="header-sub">Twoj partner od kreacji i strategii</div></div>
       </div>
 
       <div className="messages">
 
-        {/* KROK: WYBÓR TRYBU */}
+        {/* MODE */}
         <RomanMsg>
           Hej! Co robimy dzisiaj?
           {step === "mode" && (
             <div className="choices">
               {Object.entries(MODES).map(([key, m]) => (
                 <button key={key} className="choice-btn" onClick={() => {
-                  setMode(key);
-                  goNext(key === "social" ? "social_type" : "brief");
+                  setMode(key); goNext(key === "social" ? "social_type" : "brief");
                 }}>{m.emoji} {m.label}</button>
               ))}
             </div>
           )}
         </RomanMsg>
-
         {mode && isPast("mode") && <UserMsg>{MODES[mode].emoji} {MODES[mode].label}</UserMsg>}
 
-        {/* SOCIAL: POSTY CZY ROLKI */}
+        {/* SOCIAL TYPE */}
         {mode === "social" && (isPast("social_type") || step === "social_type") && (
-          <>
-            <RomanMsg>
-              Chcesz gotowe posty czy pomysły na rolki?
-              {step === "social_type" && (
-                <>
-                  <div className="choices">
-                    {Object.entries(SOCIAL_TYPES).map(([key, label]) => (
-                      <button key={key} className="choice-btn" onClick={() => { setSocialType(key); goNext("social_focus"); }}>
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-                  <div className="btn-row"><BackBtn /></div>
-                </>
-              )}
-            </RomanMsg>
-            {isPast("social_type") && socialType && <UserMsg>{SOCIAL_TYPES[socialType]}</UserMsg>}
+          <><RomanMsg>
+            Posty czy pomysly na rolki?
+            {step === "social_type" && (
+              <><div className="choices">
+                {Object.entries(SOCIAL_TYPES).map(([k, v]) => (
+                  <button key={k} className="choice-btn" onClick={() => { setSocialType(k); goNext("social_focus"); }}>{v}</button>
+                ))}
+              </div><div className="btn-row"><BackBtn /></div></>
+            )}
+          </RomanMsg>
+          {isPast("social_type") && socialType && <UserMsg>{SOCIAL_TYPES[socialType]}</UserMsg>}
           </>
         )}
 
-        {/* SOCIAL: KONKRETNY PRODUKT/WYDARZENIE? */}
+        {/* SOCIAL FOCUS */}
         {mode === "social" && (isPast("social_focus") || step === "social_focus") && (
-          <>
-            <RomanMsg>
-              Mają dotyczyć konkretnego produktu, usługi lub wydarzenia - czy ogólnie marki?
-              {step === "social_focus" && (
-                <>
-                  <div className="choices">
-                    <button className="choice-btn" onClick={() => { setSocialFocus("specific"); goNext("social_product"); }}>Konkretny produkt/wydarzenie</button>
-                    <button className="choice-btn" onClick={() => { setSocialFocus("general"); goNext("brief"); }}>Ogólnie marka</button>
-                  </div>
-                  <div className="btn-row"><BackBtn /></div>
-                </>
-              )}
-            </RomanMsg>
-            {isPast("social_focus") && socialFocus && (
-              <UserMsg>{socialFocus === "specific" ? "Konkretny produkt/wydarzenie" : "Ogólnie marka"}</UserMsg>
+          <><RomanMsg>
+            Konkretny produkt/wydarzenie czy ogolnie marka?
+            {step === "social_focus" && (
+              <><div className="choices">
+                <button className="choice-btn" onClick={() => { setSocialFocus("specific"); goNext("social_product"); }}>Konkretny produkt/wydarzenie</button>
+                <button className="choice-btn" onClick={() => { setSocialFocus("general"); goNext("brief"); }}>Ogolnie marka</button>
+              </div><div className="btn-row"><BackBtn /></div></>
             )}
+          </RomanMsg>
+          {isPast("social_focus") && socialFocus && <UserMsg>{socialFocus === "specific" ? "Konkretny produkt/wydarzenie" : "Ogolnie marka"}</UserMsg>}
           </>
         )}
 
-        {/* SOCIAL: OPIS PRODUKTU/WYDARZENIA */}
+        {/* SOCIAL PRODUCT */}
         {mode === "social" && socialFocus === "specific" && (isPast("social_product") || step === "social_product") && (
-          <>
-            <RomanMsg>
-              Opisz ten produkt, usługę lub wydarzenie - albo wgraj materiały. Im więcej wiem, tym lepiej.
-              {step === "social_product" && (
-                <>
-                  <DropZone files={socialProductFiles} onFiles={setSocialProductFiles}
-                    label="Wgraj materiały o produkcie/wydarzeniu" hint="PDF, Word, Excel, TXT..." />
-                  <div className="input-area" style={{ marginTop: 10 }}>
-                    <textarea className="msg-input" value={socialProduct}
-                      onChange={(e) => setSocialProduct(e.target.value)}
-                      placeholder="Opisz produkt, usługę lub wydarzenie..." />
-                  </div>
-                  <div className="btn-row">
-                    <BackBtn />
-                    <button className="btn btn-primary"
-                      disabled={!socialProduct.trim() && socialProductFiles.length === 0}
-                      onClick={() => goNext("brief")}>Dalej</button>
-                  </div>
-                </>
-              )}
-            </RomanMsg>
-            {isPast("social_product") && (
-              <UserMsg>
-                {socialProductFiles.map(f => `Plik: ${f.name}`).join(", ")}
-                {socialProduct && (socialProductFiles.length > 0 ? " + " : "") + (socialProduct.length > 60 ? socialProduct.slice(0,60) + "..." : socialProduct)}
-              </UserMsg>
+          <><RomanMsg>
+            Opisz produkt lub wydarzenie - albo wgraj materialy.
+            {step === "social_product" && (
+              <>
+                <DropZone files={socialProductFiles} onFiles={setSocialProductFiles} label="Wgraj materialy o produkcie" hint="PDF, Word, Excel..." />
+                <div className="input-area" style={{ marginTop: 10 }}>
+                  <textarea className="msg-input" value={socialProduct} onChange={e => setSocialProduct(e.target.value)} placeholder="Opisz produkt lub wydarzenie..." />
+                </div>
+                <div className="btn-row">
+                  <BackBtn />
+                  <button className="btn btn-primary" disabled={!socialProduct.trim() && socialProductFiles.length === 0} onClick={() => goNext("brief")}>Dalej</button>
+                </div>
+              </>
             )}
+          </RomanMsg>
+          {isPast("social_product") && <UserMsg>{socialProduct ? socialProduct.slice(0,60)+"..." : socialProductFiles.map(f=>f.name).join(", ")}</UserMsg>}
           </>
         )}
 
         {/* BRIEF */}
         {(isPast("brief") || step === "brief") && (
-          <>
-            <RomanMsg>
-              {mode === "ads"
-                ? "Wgraj brief i dane klienta - Excel, raporty PDF, cokolwiek masz."
-                : "Wgraj brief lub opisz projekt tekstem. Im więcej wiesz - tym lepiej zadziała."}
-              {step === "brief" && (
-                <>
-                  <DropZone files={briefFiles} onFiles={setBriefFiles}
-                    label="Wgraj brief (PDF, Word, Excel, TXT...)" hint="lub wpisz poniżej" />
-                  <div className="input-area" style={{ marginTop: 10 }}>
-                    <textarea className="msg-input" value={briefText} onChange={(e) => setBriefText(e.target.value)}
-                      placeholder={"Marka:\nProdukt/usługa:\nCel kampanii:\nGrupa docelowa:\nBudżet:\nRynek/kraj:"} />
-                  </div>
-                  <div className="btn-row">
-                    <BackBtn />
-                    <button className="btn btn-primary"
-                      disabled={!briefText.trim() && briefFiles.length === 0}
-                      onClick={() => goNext(mode === "social" ? "social_tonality" : "products")}>Dalej</button>
-                  </div>
-                </>
-              )}
-            </RomanMsg>
-            {isPast("brief") && (
-              <UserMsg>
-                {briefFiles.map(f => f.name).join(", ")}
-                {briefText && (briefFiles.length > 0 ? " + " : "") + (briefText.length > 60 ? briefText.slice(0,60)+"..." : briefText)}
-              </UserMsg>
+          <><RomanMsg>
+            {mode === "ads" ? "Wgraj brief i dane klienta." : "Wgraj brief lub opisz projekt tekstem."}
+            {step === "brief" && (
+              <>
+                <DropZone files={briefFiles} onFiles={setBriefFiles} label="Wgraj brief (PDF, Word, Excel, TXT...)" hint="lub wpisz ponizej" />
+                <div className="input-area" style={{ marginTop: 10 }}>
+                  <textarea className="msg-input" value={briefText} onChange={e => setBriefText(e.target.value)}
+                    placeholder={"Marka:\nProdukt/usluga:\nCel kampanii:\nGrupa docelowa:\nBudzet:\nRynek/kraj:"} />
+                </div>
+                <div className="btn-row">
+                  <BackBtn />
+                  <button className="btn btn-primary" disabled={!briefText.trim() && briefFiles.length === 0}
+                    onClick={() => goNext(mode === "social" ? "social_tonality" : "products")}>Dalej</button>
+                </div>
+              </>
             )}
+          </RomanMsg>
+          {isPast("brief") && <UserMsg>{briefText ? briefText.slice(0,60)+"..." : briefFiles.map(f=>f.name).join(", ")}</UserMsg>}
           </>
         )}
 
-        {/* SOCIAL: TONALNOŚĆ */}
+        {/* SOCIAL TONALITY */}
         {mode === "social" && (isPast("social_tonality") || step === "social_tonality") && (
-          <>
-            <RomanMsg>
-              Czy {SOCIAL_TYPES[socialType]?.toLowerCase()} mają być dopasowane do dotychczasowego stylu klienta - czy chcesz coś zmienić?
-              {step === "social_tonality" && (
-                <>
-                  <div className="choices">
-                    {Object.entries(TONALITY_TYPES).map(([key, label]) => (
-                      <button key={key} className={`choice-btn${socialTonality === key ? " selected" : ""}`}
-                        onClick={() => setSocialTonality(key)}>{label}</button>
-                    ))}
-                  </div>
-                  <div className="btn-row">
-                    <BackBtn />
-                    <button className="btn btn-primary" disabled={!socialTonality}
-                      onClick={() => goNext("examples")}>Dalej</button>
-                  </div>
-                </>
-              )}
-            </RomanMsg>
-            {isPast("social_tonality") && socialTonality && (
-              <UserMsg>{TONALITY_TYPES[socialTonality]}</UserMsg>
+          <><RomanMsg>
+            Jaka tonalnosc?
+            {step === "social_tonality" && (
+              <>
+                <div className="choices">
+                  {Object.entries(TONALITY_TYPES).map(([k, v]) => (
+                    <button key={k} className={`choice-btn${socialTonality === k ? " selected" : ""}`} onClick={() => setSocialTonality(k)}>{v}</button>
+                  ))}
+                </div>
+                <div className="btn-row"><BackBtn />
+                  <button className="btn btn-primary" disabled={!socialTonality} onClick={() => goNext("examples")}>Dalej</button>
+                </div>
+              </>
             )}
+          </RomanMsg>
+          {isPast("social_tonality") && socialTonality && <UserMsg>{TONALITY_TYPES[socialTonality]}</UserMsg>}
           </>
         )}
 
-        {/* SOCIAL: PRZYKŁADY */}
+        {/* EXAMPLES */}
         {mode === "social" && (isPast("examples") || step === "examples") && (
-          <>
-            <RomanMsg>
-              Masz przykłady postów lub scenariusze rolek, które klient zaakceptował? Wgraj - pomogę zrozumieć styl.
-              {step === "examples" && (
-                <>
-                  <DropZone files={exampleFiles} onFiles={setExampleFiles}
-                    label="Wgraj przykłady (opcjonalnie)" hint="TXT, PDF, Word..." />
-                  <div className="btn-row">
-                    <BackBtn />
-                    <button className="btn" onClick={() => { setExampleFiles([]); goNext("products"); }}>Pomiń</button>
-                    <button className="btn btn-primary" onClick={() => goNext("products")}>
-                      {exampleFiles.length > 0 ? "Dalej" : "Pomiń"}
-                    </button>
-                  </div>
-                </>
-              )}
-            </RomanMsg>
-            {isPast("examples") && (
-              <UserMsg>{exampleFiles.length > 0 ? exampleFiles.map(f => f.name).join(", ") : "Pominięto"}</UserMsg>
+          <><RomanMsg>
+            Masz przyklady zaakceptowanych postow lub rolek? Wgraj - zrozumiem styl klienta.
+            {step === "examples" && (
+              <>
+                <DropZone files={exampleFiles} onFiles={setExampleFiles} label="Wgraj przyklady (opcjonalnie)" />
+                <div className="btn-row">
+                  <BackBtn />
+                  <button className="btn" onClick={() => { setExampleFiles([]); goNext("products"); }}>Pominaj</button>
+                  <button className="btn btn-primary" onClick={() => goNext("products")}>{exampleFiles.length > 0 ? "Dalej" : "Pominaj"}</button>
+                </div>
+              </>
             )}
+          </RomanMsg>
+          {isPast("examples") && <UserMsg>{exampleFiles.length > 0 ? exampleFiles.map(f=>f.name).join(", ") : "Pominieto"}</UserMsg>}
           </>
         )}
 
-        {/* MATERIAŁY O PRODUKTACH */}
+        {/* PRODUCTS */}
         {(isPast("products") || step === "products") && (
-          <>
-            <RomanMsg>
-              Masz materiały o produktach lub usługach klienta? Katalogi, cenniki, opisy - wgraj jeśli masz.
-              {step === "products" && (
-                <>
-                  <DropZone files={productFiles} onFiles={setProductFiles}
-                    label="Wgraj materiały (opcjonalnie)" hint="PDF, Excel, Word, TXT..." />
-                  <div className="btn-row">
-                    <BackBtn />
-                    <button className="btn" onClick={() => { setProductFiles([]); goNext("notes"); }}>Pomiń</button>
-                    <button className="btn btn-primary" onClick={() => goNext("notes")}>
-                      {productFiles.length > 0 ? "Dalej" : "Pomiń"}
-                    </button>
-                  </div>
-                </>
-              )}
-            </RomanMsg>
-            {isPast("products") && (
-              <UserMsg>{productFiles.length > 0 ? productFiles.map(f => f.name).join(", ") : "Brak materiałów"}</UserMsg>
+          <><RomanMsg>
+            Masz materialy o produktach lub uslugach klienta?
+            {step === "products" && (
+              <>
+                <DropZone files={productFiles} onFiles={setProductFiles} label="Wgraj materialy (opcjonalnie)" hint="PDF, Excel, Word, TXT..." />
+                <div className="btn-row">
+                  <BackBtn />
+                  <button className="btn" onClick={() => { setProductFiles([]); goNext("notes"); }}>Pominaj</button>
+                  <button className="btn btn-primary" onClick={() => goNext("notes")}>{productFiles.length > 0 ? "Dalej" : "Pominaj"}</button>
+                </div>
+              </>
             )}
+          </RomanMsg>
+          {isPast("products") && <UserMsg>{productFiles.length > 0 ? productFiles.map(f=>f.name).join(", ") : "Brak materialow"}</UserMsg>}
           </>
         )}
 
-        {/* WSKAZÓWKI + URUCHOMIENIE */}
+        {/* NOTES */}
         {(isPast("notes") || step === "notes") && (
-          <>
-            <RomanMsg>
-              Coś jeszcze? Wytyczne, czego unikać, tone of voice? Możesz też od razu kliknąć.
-              {step === "notes" && (
-                <>
-                  <div className="input-area" style={{ marginTop: 10 }}>
-                    <textarea className="msg-input" value={notes} onChange={(e) => setNotes(e.target.value)}
-                      placeholder="np. Unikamy humoru, target to kobiety 35+, marka premium..."
-                      style={{ minHeight: 60 }} />
-                  </div>
-                  <div className="btn-row">
-                    <BackBtn />
-                    <button className="btn btn-primary" onClick={runPipeline}>Działaj Romek 🚀</button>
-                  </div>
-                </>
-              )}
-            </RomanMsg>
-            {isPast("notes") && notes && <UserMsg>{notes.length > 80 ? notes.slice(0,80)+"..." : notes}</UserMsg>}
-          </>
-        )}
-
-        {/* CLARIFICATION — Roman pyta usera */}
-        {(isPast("clarification") || step === "clarification") && (
-          <>
-            <RomanMsg>
-              Mam kilka pytań zanim pójdę dalej:
-              <div style={{ marginTop: 8, padding: "10px 14px", background: "var(--bg)", borderRadius: 8, fontSize: 13, whiteSpace: "pre-wrap", border: "1px solid var(--border)" }}>
-                {clarificationQs}
-              </div>
-              {step === "clarification" && (
-                <>
-                  <div className="input-area" style={{ marginTop: 10 }}>
-                    <textarea className="msg-input" value={clarificationAnswers}
-                      onChange={(e) => setClarificationAnswers(e.target.value)}
-                      placeholder="Twoje odpowiedzi..."
-                      style={{ minHeight: 80 }} />
-                  </div>
-                  <div className="btn-row">
-                    <button className="btn btn-primary" disabled={!clarificationAnswers.trim()}
-                      onClick={resumeAfterClarification}>Działaj Romek 🚀</button>
-                  </div>
-                </>
-              )}
-            </RomanMsg>
-            {isPast("clarification") && clarificationAnswers && (
-              <UserMsg>{clarificationAnswers.length > 80 ? clarificationAnswers.slice(0,80)+"..." : clarificationAnswers}</UserMsg>
+          <><RomanMsg>
+            Cos jeszcze? Wytyczne, czego unikac?
+            {step === "notes" && (
+              <>
+                <div className="input-area" style={{ marginTop: 10 }}>
+                  <textarea className="msg-input" value={notes} onChange={e => setNotes(e.target.value)}
+                    placeholder="np. Unikamy humoru, target to kobiety 35+..." style={{ minHeight: 60 }} />
+                </div>
+                <div className="btn-row"><BackBtn /><button className="btn btn-primary" onClick={runPipeline}>Dzialaj Romek 🚀</button></div>
+              </>
             )}
+          </RomanMsg>
+          {isPast("notes") && notes && <UserMsg>{notes.slice(0,60)}</UserMsg>}
           </>
         )}
 
-        {/* RUNNING / DONE */}
-        {(step === "running" || done) && (
+        {/* CLARIFICATION */}
+        {(isPast("clarification") || step === "clarification") && (
+          <><RomanMsg>
+            Mam kilka pytan zanim pojde dalej:
+            <div style={{ marginTop: 8, padding: "10px 14px", background: "var(--bg)", borderRadius: 8, fontSize: 13, whiteSpace: "pre-wrap", border: "1px solid var(--border)" }}>
+              {clarificationQs}
+            </div>
+            {step === "clarification" && (
+              <>
+                <div className="input-area" style={{ marginTop: 10 }}>
+                  <textarea className="msg-input" value={clarificationAnswers} onChange={e => setClarificationAnswers(e.target.value)}
+                    placeholder="Twoje odpowiedzi..." style={{ minHeight: 80 }} />
+                </div>
+                <div className="btn-row">
+                  <button className="btn btn-primary" disabled={!clarificationAnswers.trim()} onClick={runAfterClarification}>Dzialaj Romek 🚀</button>
+                </div>
+              </>
+            )}
+          </RomanMsg>
+          {isPast("clarification") && clarificationAnswers && <UserMsg>{clarificationAnswers.slice(0,60)}</UserMsg>}
+          </>
+        )}
+
+        {/* RUNNING */}
+        {isRunning && (
           <RomanMsg>
-            {done ? "Gotowe!" : "Na to czekałem! Zaczynam..."}
+            Zaczynam...
             <div className="progress-steps" style={{ marginTop: 12 }}>
-              {activeSteps.map((id) => (
+              {currentSteps.map(id => (
                 <div key={id} className={stepClass(id)}>
-                  <span className="step-icon">
-                    {agentStatus[id] === "running"
-                      ? <span className="spin">⟳</span>
-                      : AGENT_LABELS[id]?.icon}
-                  </span>
+                  <span className="step-icon">{agentStatus[id] === "running" ? <span className="spin">⟳</span> : AGENT_LABELS[id]?.icon}</span>
                   <div className="step-name">{AGENT_LABELS[id]?.name}</div>
                   <div className="step-status">{stepStatus(id)}</div>
                 </div>
               ))}
             </div>
-            {error && <div className="error-box">Błąd: {error}</div>}
-            {Object.keys(results).length > 0 && <ResultTabs mode={mode} results={results} />}
-            {done && (
-              <div className="btn-row" style={{ marginTop: 12 }}>
-                <button className="btn" onClick={resetAll}>Nowy brief</button>
-                <button className="btn" onClick={() => navigator.clipboard.writeText(buildReport())}>Kopiuj</button>
-                <button className="btn btn-primary" onClick={download}>Pobierz .md</button>
+            {error && <div className="error-box">Blad: {error}</div>}
+            {Object.keys(results).length > 0 && (
+              <ResultTabs mode={mode} results={results}
+                extraTabs={results["social_from_strategy"] ? [{ key: "social_from_strategy", label: "Posty/Rolki" }] : []} />
+            )}
+          </RomanMsg>
+        )}
+
+        {/* DONE - RESULTS */}
+        {done && !isRunning && (
+          <RomanMsg>
+            Gotowe!
+            <ResultTabs mode={mode} results={results}
+              extraTabs={results["social_from_strategy"] ? [{ key: "social_from_strategy", label: "Posty/Rolki" }] : []} />
+            <div className="btn-row" style={{ marginTop: 12 }}>
+              <button className="btn" onClick={resetAll}>Nowy brief</button>
+              <button className="btn btn-primary" onClick={downloadWord}>Pobierz Word (.docx)</button>
+            </div>
+          </RomanMsg>
+        )}
+
+        {/* ── POST-PIPELINE OPTIONS ── */}
+
+        {/* 1. Czy plan reklamowy? (concept/strategy/social) */}
+        {done && mode !== "ads" && wantsAnalyst === null && (
+          <RomanMsg>
+            Czy przygotowac plan reklamowy (budzety, benchmarki, konfiguracja analityki)?
+            <div className="choices">
+              <button className="choice-btn" onClick={() => { runAnalystNow(); }}>Tak, przygotuj plan</button>
+              <button className="choice-btn" onClick={() => setWantsAnalyst(false)}>Nie, dziekuje</button>
+            </div>
+          </RomanMsg>
+        )}
+        {wantsAnalyst === false && <UserMsg>Nie, dziekuje</UserMsg>}
+        {wantsAnalyst === true && results.analyst && <UserMsg>Tak, przygotuj plan</UserMsg>}
+
+        {/* 2. Czy posty/rolki? (po concept/strategy) */}
+        {done && (mode === "concept" || mode === "strategy") && wantsAnalyst !== null && wantsSocial === null && (
+          <RomanMsg>
+            Czy przygotowac posty lub rolki na podstawie tej strategii/konceptu?
+            <div className="choices">
+              <button className="choice-btn" onClick={() => setWantsSocial(true)}>Tak</button>
+              <button className="choice-btn" onClick={() => setWantsSocial(false)}>Nie, dziekuje</button>
+            </div>
+          </RomanMsg>
+        )}
+        {wantsSocial === false && <UserMsg>Nie, dziekuje</UserMsg>}
+
+        {/* 2b. Jaki typ social? */}
+        {done && wantsSocial === true && socialFromStrategyType === null && (
+          <RomanMsg>
+            Posty czy rolki?
+            <div className="choices">
+              {Object.entries(SOCIAL_TYPES).map(([k, v]) => (
+                <button key={k} className="choice-btn" onClick={() => setSocialFromStrategyType(k)}>{v}</button>
+              ))}
+            </div>
+          </RomanMsg>
+        )}
+
+        {/* 2c. Tonalnosc dla social from strategy */}
+        {done && wantsSocial === true && socialFromStrategyType !== null && socialFromStrategyTonality === null && (
+          <RomanMsg>
+            Jaka tonalnosc?
+            <div className="choices">
+              {Object.entries(TONALITY_TYPES).map(([k, v]) => (
+                <button key={k} className="choice-btn" onClick={() => { setSocialFromStrategyTonality(k); runSocialFromStrategy(); }}>
+                  {v}
+                </button>
+              ))}
+            </div>
+          </RomanMsg>
+        )}
+
+        {/* 3. Czy grafiki? */}
+        {done && showDesignFlow && wantsAnalyst !== null && (wantsSocial !== null || (mode !== "concept" && mode !== "strategy")) && wantsDesign === null && (
+          <RomanMsg>
+            Czy chcesz zobaczyc propozycje wizualizacji graficznych?
+            <div className="choices">
+              <button className="choice-btn" onClick={() => { setWantsDesign(true); goNext("design_post_select"); }}>Tak, generuj wizualizacje</button>
+              <button className="choice-btn" onClick={() => setWantsDesign(false)}>Nie, dziekuje</button>
+            </div>
+          </RomanMsg>
+        )}
+        {wantsDesign === false && <UserMsg>Nie, dziekuje</UserMsg>}
+
+        {/* DESIGN FLOW */}
+
+        {/* Post selection (for social) */}
+        {wantsDesign && (isPast("design_post_select") || step === "design_post_select") && (results.creative || results["social_from_strategy"]) && (mode === "social" || wantsSocial) && (
+          <><RomanMsg>
+            Grafika bedzie odnosic sie do konkretnego posta. Opisz lub wklej tresc posta do ktorego chcesz grafike.
+            {step === "design_post_select" && (
+              <>
+                <div className="input-area" style={{ marginTop: 10 }}>
+                  <textarea className="msg-input" value={selectedPostForDesign} onChange={e => setSelectedPostForDesign(e.target.value)}
+                    placeholder="Wklej tresc wybranego posta lub opisz o czym ma byc grafika..."
+                    style={{ minHeight: 80 }} />
+                </div>
+                <div className="btn-row">
+                  <button className="btn" onClick={() => goNext("design_assets")}>Pominaj (ogolna grafika)</button>
+                  <button className="btn btn-primary" disabled={!selectedPostForDesign.trim()} onClick={() => goNext("design_assets")}>Dalej</button>
+                </div>
+              </>
+            )}
+          </RomanMsg>
+          {isPast("design_post_select") && <UserMsg>{selectedPostForDesign ? selectedPostForDesign.slice(0,60)+"..." : "Ogolna grafika"}</UserMsg>}
+          </>
+        )}
+
+        {/* Assets */}
+        {wantsDesign && (isPast("design_assets") || step === "design_assets") && (
+          <><RomanMsg>
+            Masz logo, font i kolory klienta?
+            {step === "design_assets" && (
+              <>
+                <div className="choices">
+                  <button className="choice-btn" onClick={() => { setHasBrandAssets(true); goNext("design_upload"); }}>Tak, wgram</button>
+                  <button className="choice-btn" onClick={() => { setHasBrandAssets(false); goNext("design_position"); }}>Nie - Roman robi co moze</button>
+                </div>
+                <div className="btn-row"><BackBtn /></div>
+              </>
+            )}
+          </RomanMsg>
+          {isPast("design_assets") && <UserMsg>{hasBrandAssets ? "Tak, mam assety" : "Brak assetow"}</UserMsg>}
+          </>
+        )}
+
+        {/* Upload assets */}
+        {wantsDesign && hasBrandAssets && (isPast("design_upload") || step === "design_upload") && (
+          <><RomanMsg>
+            Wgraj logo (PNG), font (TTF) i podaj kolory HEX.
+            {step === "design_upload" && (
+              <>
+                <div style={{ marginTop: 10 }}>
+                  <div className="field-label">Logo (PNG z przezroczystoscia)</div>
+                  <DropZone files={logoFile} onFiles={setLogoFile} label="Wgraj logo" accept={IMG_ACCEPTED} single />
+                </div>
+                <div style={{ marginTop: 10 }}>
+                  <div className="field-label">Font marki (TTF, OTF)</div>
+                  <DropZone files={fontFile} onFiles={setFontFile} label="Wgraj font" accept={FONT_ACCEPTED} single />
+                </div>
+                <div className="input-area" style={{ marginTop: 10 }}>
+                  <input type="text" placeholder="Kolory HEX np. #FF5733, #2C3E50" value={brandColors}
+                    onChange={e => setBrandColors(e.target.value)}
+                    style={{ width: "100%", border: "none", background: "none", outline: "none", fontFamily: "inherit", fontSize: 14 }} />
+                </div>
+                <div className="btn-row"><BackBtn /><button className="btn btn-primary" onClick={() => goNext("design_position")}>Dalej</button></div>
+              </>
+            )}
+          </RomanMsg>
+          {isPast("design_upload") && <UserMsg>Logo: {logoFile[0]?.name || "brak"} | Font: {fontFile[0]?.name || "brak"}</UserMsg>}
+          </>
+        )}
+
+        {/* Logo position */}
+        {wantsDesign && (isPast("design_position") || step === "design_position") && (
+          <><RomanMsg>
+            Gdzie ma byc logo?
+            {step === "design_position" && (
+              <>
+                <div className="choices">
+                  {Object.entries(LOGO_POSITIONS).map(([k, v]) => (
+                    <button key={k} className={`choice-btn${logoPosition === k ? " selected" : ""}`} onClick={() => setLogoPosition(k)}>{v}</button>
+                  ))}
+                </div>
+                <div className="btn-row"><BackBtn />
+                  <button className="btn btn-primary" disabled={!logoPosition} onClick={() => goNext("design_text")}>Dalej</button>
+                </div>
+              </>
+            )}
+          </RomanMsg>
+          {isPast("design_position") && logoPosition && <UserMsg>{LOGO_POSITIONS[logoPosition]}</UserMsg>}
+          </>
+        )}
+
+        {/* Text */}
+        {wantsDesign && (isPast("design_text") || step === "design_text") && (
+          <><RomanMsg>
+            Czy na grafice ma byc konkretny tekst?
+            {step === "design_text" && (
+              <>
+                <div className="choices">
+                  <button className="choice-btn" onClick={() => setDesignTextChoice("custom")}>Wpisuje tekst</button>
+                  <button className="choice-btn" onClick={() => setDesignTextChoice("none")}>Bez tekstu</button>
+                </div>
+                {designTextChoice === "custom" && (
+                  <div className="input-area" style={{ marginTop: 10 }}>
+                    <textarea className="msg-input" value={designText} onChange={e => setDesignText(e.target.value)}
+                      placeholder="Tekst ktory ma pojawic sie na grafice..." style={{ minHeight: 60 }} />
+                  </div>
+                )}
+                {designTextChoice && (
+                  <div className="btn-row"><BackBtn />
+                    <button className="btn btn-primary" onClick={() => goNext("design_formats")}>Dalej</button>
+                  </div>
+                )}
+              </>
+            )}
+          </RomanMsg>
+          {isPast("design_text") && designTextChoice && <UserMsg>{designTextChoice === "custom" ? `"${designText}"` : "Bez tekstu"}</UserMsg>}
+          </>
+        )}
+
+        {/* Formats */}
+        {wantsDesign && (isPast("design_formats") || step === "design_formats") && (
+          <><RomanMsg>
+            Ktore formaty?
+            {step === "design_formats" && (
+              <>
+                <div className="choices">
+                  {DESIGN_FORMATS.map(f => (
+                    <button key={f.key} className={`choice-btn${selectedFormats.includes(f.key) ? " selected" : ""}`}
+                      onClick={() => setSelectedFormats(p => p.includes(f.key) ? p.filter(x => x !== f.key) : [...p, f.key])}>
+                      {f.label}
+                    </button>
+                  ))}
+                </div>
+                <div style={{ fontSize: 12, color: "var(--text-hint)", marginTop: 6 }}>Mozesz wybrac kilka</div>
+                <div className="btn-row"><BackBtn />
+                  <button className="btn btn-primary" disabled={selectedFormats.length === 0}
+                    onClick={() => { goNext("design_generating"); runDesign(0, ""); }}>
+                    Generuj 2 propozycje 🎨
+                  </button>
+                </div>
+              </>
+            )}
+          </RomanMsg>
+          {isPast("design_formats") && <UserMsg>{selectedFormats.map(k => DESIGN_FORMATS.find(f=>f.key===k)?.label).join(", ")}</UserMsg>}
+          </>
+        )}
+
+        {/* Design results */}
+        {wantsDesign && (step === "design_generating" || designVariants.length > 0) && (
+          <RomanMsg>
+            {designGenerating && designVariants.length === 0 && (
+              <div className="empty-state"><span className="spin" style={{ fontSize: 24 }}>⟳</span><span>Generuje wizualizacje...</span></div>
+            )}
+            {designError && <div className="error-box">Blad: {designError}</div>}
+            {designVariants.map((v, i) => (
+              <DesignVariant key={i} variant={v} variantNum={i + 1} selectedFormats={selectedFormats} />
+            ))}
+            {designVariants.length >= 2 && !designGenerating && (
+              <>
+                <div style={{ marginTop: 12, fontWeight: 500, fontSize: 14 }}>Co chcesz zmienic?</div>
+                <div style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 8 }}>
+                  Opisz dokladnie - kolory, kompozycje, nastoj, co Ci sie nie podoba.
+                </div>
+                <div className="input-area">
+                  <textarea className="msg-input" value={feedbackText} onChange={e => setFeedbackText(e.target.value)}
+                    placeholder="np. Za ciemne tlo, logo za male, chce bardziej minimalistycznie..."
+                    style={{ minHeight: 70 }} />
+                </div>
+                <div className="btn-row">
+                  <button className="btn" onClick={resetAll}>Nowy brief</button>
+                  <button className="btn btn-primary" disabled={!feedbackText.trim()}
+                    onClick={() => { runDesign(designIteration, feedbackText); setFeedbackText(""); }}>
+                    Popraw i generuj 🎨
+                  </button>
+                </div>
+              </>
+            )}
+            {designGenerating && designVariants.length > 0 && (
+              <div style={{ fontSize: 13, color: "var(--text-muted)", marginTop: 8 }}>
+                <span className="spin">⟳</span> Generuje kolejne warianty...
               </div>
             )}
           </RomanMsg>
