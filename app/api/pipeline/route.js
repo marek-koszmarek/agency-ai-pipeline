@@ -23,7 +23,16 @@ async function parseFile(name, base64, mimeType) {
       return text;
     } catch { return `[Excel: ${name} - blad parsowania]`; }
   }
-  return `[Plik: ${name}]\n${buffer.toString("utf-8")}`;
+  // Word documents - cannot parse binary as text, return note
+  if (name.match(/\.(docx|doc)$/i) || mimeType?.includes("wordprocessingml") || mimeType?.includes("msword")) {
+    return `[Word dokument: ${name}]\nUWAGA: Plik Word zostal dolaczony ale jego zawartosc nie moze byc automatycznie odczytana. Jesli zawiera wazne informacje - wklej je jako tekst w briefie.`;
+  }
+  // Other text files
+  try {
+    return `[Plik: ${name}]\n${buffer.toString("utf-8").slice(0, 8000)}`;
+  } catch {
+    return `[Plik: ${name} - nie mozna odczytac]`;
+  }
 }
 
 async function callAgent(system, userMessage, useCreativeModel = false) {
@@ -120,9 +129,9 @@ export async function POST(req) {
             existingCreative ? `\nIST NIEJACY KONCEPT/STRATEGIA:\n${existingCreative}` : "",
             parsedFiles ? `\nDODATKOWE MATERIALY:\n${parsedFiles}` : "",
           ].filter(Boolean).join("\n");
-          send({ agent: "creative", status: "running" });
+          send({ agent: "social_content", status: "running" });
           const social = await callAgent(SOCIAL_PROMPT, socialInput, false); // Sonnet for speed
-          send({ agent: "creative", status: "done", content: social });
+          send({ agent: "social_content", status: "done", content: social });
           send({ agent: "all", status: "done" });
           return;
         }
@@ -142,8 +151,12 @@ export async function POST(req) {
           brief ? `\nBRIEF:\n${brief}` : "",
           notes ? `\nDODATKOWE WSKAZOWKI:\n${notes}` : "",
           socialContext ? `\nKONTEKST SOCIAL:\n${socialContext}` : "",
-          parsedFiles ? `\\nDOSTARCZONE MATERIALY:\\n${parsedFiles}` : `\\nUWAGA: Brak materialow od klienta. Przeprowadz research marki z briefu i wiedzy rynkowej. Jesli brakuje info - zadaj pytania w sekcji PYTANIA DO KLIENTA.`,
-        ].filter(Boolean).join("\\n");
+          parsedFiles
+            ? `\nDOSTARCZONE MATERIALY:\n${parsedFiles}`
+            : researchBrand
+              ? `\nUWAGA: Klient poprosil o samodzielny research marki. Przeprowadz pelny research marki/kategorii na podstawie briefu i swojej wiedzy rynkowej. Znajdz insighty, mapuj konkurencje, zdefiniuj grupe celowa. Pracuj bez dodatkowych materialow - to Twoje zadanie.`
+              : `\nUWAGA: Brak dodatkowych materialow od klienta. Pracuj z briefem i wiedza rynkowa.`,
+        ].filter(Boolean).join("\n");
         send({ agent: "researcher", status: "running" });
         const rawResearch = await callAgent(RESEARCHER_PROMPT, researcherInput);
 
