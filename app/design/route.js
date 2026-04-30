@@ -5,42 +5,81 @@ export const maxDuration = 120;
 
 function sse(obj) { return `data: ${JSON.stringify(obj)}\n\n`; }
 
-// ── Scrape brand website ──────────────────────────────────────────
+// ── Scrape brand website + extract product images ─────────────────
 async function scrapeBrandWebsite(url) {
-  if (!url || !url.startsWith("http")) return "";
+  if (!url || !url.startsWith("http")) return { text: "", imageUrls: [] };
   try {
     const res = await fetch(url, {
       headers: { "User-Agent": "Mozilla/5.0 (compatible; RomanAI/1.0)" },
       signal: AbortSignal.timeout(8000),
     });
-    if (!res.ok) return "";
+    if (!res.ok) return { text: "", imageUrls: [] };
     const html = await res.text();
 
-    // Extract meaningful text: remove scripts, styles, nav, footer
+    // Extract product image URLs from img tags
+    const imgMatches = [...html.matchAll(/<img[^>]+src=["']([^"']+)["'][^>]*>/gi)];
+    const baseUrl = new URL(url);
+    const imageUrls = imgMatches
+      .map(m => m[1])
+      .filter(src => {
+        const lower = src.toLowerCase();
+        // Keep product-like images, skip icons/logos/placeholders
+        return !lower.includes("icon") && !lower.includes("logo") &&
+               !lower.includes("placeholder") && !lower.includes("sprite") &&
+               !lower.includes("pixel") && !lower.includes("tracking") &&
+               (lower.includes(".jpg") || lower.includes(".jpeg") ||
+                lower.includes(".png") || lower.includes(".webp"));
+      })
+      .map(src => {
+        try {
+          return src.startsWith("http") ? src : new URL(src, baseUrl.origin).href;
+        } catch { return null; }
+      })
+      .filter(Boolean)
+      .slice(0, 6); // Max 6 product images
+
+    // Extract text content
     const cleaned = html
       .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
       .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
       .replace(/<nav[^>]*>[\s\S]*?<\/nav>/gi, "")
       .replace(/<footer[^>]*>[\s\S]*?<\/footer>/gi, "")
-      .replace(/<header[^>]*>[\s\S]*?<\/header>/gi, "")
       .replace(/<[^>]+>/g, " ")
       .replace(/\s+/g, " ")
       .trim()
       .slice(0, 3000);
 
-    return cleaned;
+    return { text: cleaned, imageUrls };
   } catch {
-    return "";
+    return { text: "", imageUrls: [] };
   }
 }
 
-// ── Claude writes proper visual brief ────────────────────────────
-async function generateVisualBrief(concept, postContent, brandUrl, websiteContent, userDirection, feedbackNotes, apiKey) {
+// ── Download product image as base64 ─────────────────────────────
+async function fetchImageAsBase64(url) {
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    if (!res.ok) return null;
+    const buffer = await res.arrayBuffer();
+    const b64 = Buffer.from(buffer).toString("base64");
+    const ct = res.headers.get("content-type") || "image/jpeg";
+    return { b64, mimeType: ct.split(";")[0] };
+  } catch { return null; }
+}
+
+// ── Claude writes visual brief ────────────────────────────────────
+async function generateVisualBrief(concept, postContent, brandUrl, websiteContent, imageUrls, userDirection, feedbackNotes, apiKey) {
   const client = new Anthropic({ apiKey });
 
+  const hasImages = imageUrls && imageUrls.length > 0;
+  const imageContext = hasImages
+    ? `\nPRODUCT IMAGES FOUND ON WEBSITE: ${imageUrls.join(", ")}\n(These are real product images from the brand's website)`
+    : "";
+
   const contextParts = [
-    concept ? `BRAND/PRODUCT INFO:\n${concept.slice(0, 1000)}` : "",
-    websiteContent ? `BRAND WEBSITE CONTENT:\n${websiteContent.slice(0, 1500)}` : "",
+    concept ? `BRAND/PRODUCT INFO:\n${concept.slice(0, 800)}` : "",
+    websiteContent ? `BRAND WEBSITE CONTENT:\n${websiteContent.slice(0, 1200)}` : "",
+    imageContext,
     postContent ? `POST THEME:\n${postContent.slice(0, 300)}` : "",
     userDirection ? `USER VISUAL DIRECTION:\n${userDirection}` : "",
     feedbackNotes ? `REVISION FEEDBACK:\n${feedbackNotes}` : "",
@@ -51,21 +90,19 @@ async function generateVisualBrief(concept, postContent, brandUrl, websiteConten
     max_tokens: 500,
     messages: [{
       role: "user",
-      content: `You are a senior art director at a top advertising agency. Write an image generation prompt for Imagen 4 Ultra (Google's best AI image model).
+      content: `You are a senior art director. Write an Imagen 4 Ultra image generation prompt.
 
-IMPORTANT CONSTRAINTS:
-- Imagen 4 cannot render specific branded products it hasn't seen — so describe ATMOSPHERE, LIFESTYLE, MOOD, SCENE that fits the brand
-- The prompt must result in a background image a designer will composite the real product onto
-- Be extremely specific about: lighting, composition, color palette, photography style, mood, setting
-- Reference real photographers or visual styles (e.g. "shot by Annie Leibovitz", "Kinfolk magazine editorial", "Wallpaper* magazine aesthetic")
-- NO text, logos, labels, or brand names in the scene
-
-BRAND CONTEXT:
+CONTEXT:
 ${contextParts}
 
-Based on the brand context, write ONE precise image prompt (90-130 words) describing a SCENE that perfectly matches this brand's world. Think: where do the brand's customers use this product? What emotion does it evoke? What time of day, what setting, what materials, what light?
+RULES:
+- Describe a SCENE or ATMOSPHERE that fits this brand — Imagen cannot render specific branded products from URLs
+- Be very specific: lighting, composition, colors, photography style, mood, materials
+- Reference real photographers/styles (e.g. "Kinfolk magazine", "shot by Annie Leibovitz")
+- NO text, logos, or labels in the image
+- 90-130 words maximum
 
-Write ONLY the prompt text, no explanation.`
+Write ONLY the prompt, no explanation.`
     }]
   });
   return msg.content[0].text.trim();
@@ -100,52 +137,50 @@ export async function POST(req) {
       try {
         const sharp = (await import("sharp")).default;
 
-        // Step 1: Scrape brand website
+        // Step 1: Scrape brand website + get product images
         let websiteContent = "";
+        let productImageUrls = [];
         if (brandUrl) {
-          send({ status: "scraping", message: `Skanuję stronę ${brandUrl}...` });
-          websiteContent = await scrapeBrandWebsite(brandUrl);
+          send({ status: "scraping", message: `Skanuję ${brandUrl}...` });
+          const scraped = await scrapeBrandWebsite(brandUrl);
+          websiteContent = scraped.text;
+          productImageUrls = scraped.imageUrls;
+          if (productImageUrls.length > 0) {
+            send({ status: "scraping", message: `Znalazłem ${productImageUrls.length} zdjęć produktów` });
+          }
         }
 
         // Step 2: Claude writes visual brief
-        send({ status: "thinking", message: "Roman pisze brief wizualny dla Imagen..." });
-
+        send({ status: "thinking", message: "Roman pisze brief wizualny..." });
         let visualPrompt;
         try {
           visualPrompt = await generateVisualBrief(
             concept, postContent, brandUrl, websiteContent,
-            visualDirection, feedbackNotes, ANTHROPIC_API_KEY
+            productImageUrls, visualDirection, feedbackNotes, ANTHROPIC_API_KEY
           );
-        } catch (e) {
-          // Fallback: basic prompt
+        } catch {
           visualPrompt = `Professional lifestyle advertising photograph. ${visualDirection || "Clean, modern aesthetic"}. Natural light, premium quality. No text or logos.`;
         }
-
-        // Send brief to client so user can see it
         send({ status: "brief_ready", brief: visualPrompt });
 
         // Step 3: Build final Imagen prompt
-        const colorStr = brandColors.length
-          ? ` Use color palette: ${brandColors.join(", ")}.`
-          : "";
+        const colorStr = brandColors.length ? ` Color palette: ${brandColors.join(", ")}.` : "";
         const logoCorner = logoPosition === "roman" ? "bottom-right" : logoPosition.replace("_", " ");
         const textBand = textOnImage?.trim()
-          ? ` Reserve a clean band at the ${logoPosition.startsWith("top") ? "bottom" : "top"} of the frame (15% height) with subtle dark overlay for text overlay.`
+          ? ` Reserve a clean band at ${logoPosition.startsWith("top") ? "bottom" : "top"} (15% height) with dark overlay for text.`
           : "";
 
         const finalPrompt =
-          `IMPORTANT: ZERO text, letters, numbers, or words anywhere in the image. Pure visual only.\n\n` +
+          `STRICTLY NO text, letters, numbers or words anywhere in the image.\n\n` +
           `${visualPrompt}${colorStr}${textBand} ` +
-          `Keep the ${logoCorner} corner area clear and uncluttered for logo placement. ` +
-          `Square 1:1 composition. No watermarks, no UI elements.`;
+          `Keep ${logoCorner} corner clear for logo. Square 1:1. No watermarks.`;
 
-        send({ status: "generating", message: "Generuję 2 warianty w Imagen 4 Ultra..." });
+        send({ status: "generating", message: "Imagen 4 Ultra generuje..." });
 
         const variants = [];
         for (let i = 0; i < 2; i++) {
-          const iterPrompt = i === 0
-            ? finalPrompt
-            : finalPrompt + " Alternative angle, different depth of field and light direction.";
+          const iterPrompt = i === 0 ? finalPrompt
+            : finalPrompt + " Alternative angle, different lighting direction.";
 
           const imageBase64 = await generateImageWithGemini(iterPrompt, GOOGLE_API_KEY);
           const imageBuffer = Buffer.from(imageBase64, "base64");
@@ -157,38 +192,33 @@ export async function POST(req) {
 
             const composites = [];
 
-            // Only add text overlay SVG when text is actually provided
+            // FIX 2: Text overlay — works even WITHOUT font (uses system Arial)
             if (textOnImage?.trim()) {
-              let fontFaceCSS = "";
-              if (fontBase64) {
-                fontFaceCSS = `@font-face { font-family: 'BrandFont'; src: url('data:font/truetype;base64,${fontBase64}'); }`;
-              }
               const fontFamily = fontBase64 ? "BrandFont" : "Arial, Helvetica, sans-serif";
+              const fontFaceCSS = fontBase64
+                ? `@font-face { font-family: 'BrandFont'; src: url('data:font/truetype;base64,${fontBase64}'); }`
+                : "";
               const textY = getTextY(logoPosition, fmt.h);
-              const fontSize = Math.floor(fmt.w * 0.05);
+              const fontSize = Math.floor(fmt.w * 0.052);
               const safeText = textOnImage
                 .replace(/&/g, "&amp;").replace(/</g, "&lt;")
                 .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
-              composites.push({
-                input: Buffer.from(
-                  `<svg width="${fmt.w}" height="${fmt.h}" xmlns="http://www.w3.org/2000/svg">
-                    <defs>
-                      <style>${fontFaceCSS}</style>
-                      <filter id="sh"><feDropShadow dx="0" dy="2" stdDeviation="5" flood-opacity="0.5"/></filter>
-                    </defs>
-                    <rect x="40" y="${textY - fontSize - 14}" width="${fmt.w - 80}" height="${fontSize + 32}"
-                      fill="black" fill-opacity="0.38" rx="8"/>
-                    <text x="${fmt.w / 2}" y="${textY}"
-                      font-family="${fontFamily}" font-size="${fontSize}" font-weight="600"
-                      fill="white" text-anchor="middle" filter="url(#sh)">${safeText}</text>
-                  </svg>`
-                ),
-                top: 0, left: 0,
-              });
+              const svgOverlay = `<svg width="${fmt.w}" height="${fmt.h}" xmlns="http://www.w3.org/2000/svg">
+                <defs>
+                  <style>${fontFaceCSS}</style>
+                  <filter id="sh"><feDropShadow dx="0" dy="2" stdDeviation="5" flood-opacity="0.55"/></filter>
+                </defs>
+                <rect x="0" y="${textY - fontSize - 20}" width="${fmt.w}" height="${fontSize + 48}"
+                  fill="black" fill-opacity="0.42" rx="0"/>
+                <text x="${fmt.w / 2}" y="${textY + 4}"
+                  font-family="${fontFamily}" font-size="${fontSize}" font-weight="700"
+                  fill="white" text-anchor="middle" filter="url(#sh)">${safeText}</text>
+              </svg>`;
+              composites.push({ input: Buffer.from(svgOverlay), top: 0, left: 0 });
             }
 
-            // Add logo
+            // Logo overlay
             if (logoBase64) {
               const logoBuffer = Buffer.from(logoBase64, "base64");
               const maxLogoW = Math.floor(fmt.w * 0.22);
