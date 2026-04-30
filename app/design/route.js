@@ -136,6 +136,17 @@ export async function POST(req) {
 
       try {
         const sharp = (await import("sharp")).default;
+        const fs = (await import("fs")).default;
+        const path = (await import("path")).default;
+
+        // Load embedded Poppins font — deployed in public/fonts/
+        // Falls back gracefully if file not found
+        let embeddedFontB64 = null;
+        try {
+          const fontPath = path.join(process.cwd(), "public", "fonts", "Poppins-Bold.ttf");
+          const fontBuffer = fs.readFileSync(fontPath);
+          embeddedFontB64 = fontBuffer.toString("base64");
+        } catch { /* font not found — will use system fallback */ }
 
         // Step 1: Scrape brand website + get product images
         let websiteContent = "";
@@ -200,12 +211,14 @@ export async function POST(req) {
                 return (code > 127 || c === "&" || c === "<" || c === ">" || c === '"') ? `&#${code};` : c;
               }).join("");
 
-              const fontFaceCSS = fontBase64
-                ? `@font-face { font-family: 'BrandFont'; src: url('data:font/truetype;base64,${fontBase64}'); }`
+              // Use user font if provided, else embedded Poppins, else system fallback
+              const activeFont = fontBase64 || embeddedFontB64;
+              const fontFaceCSS = activeFont
+                ? `@font-face { font-family: 'BrandFont'; src: url('data:font/truetype;base64,${activeFont}'); }`
                 : "";
-              const fontFamily = fontBase64
-                ? "BrandFont, DejaVu Sans, Liberation Sans, Arial, sans-serif"
-                : "DejaVu Sans, Liberation Sans, FreeSans, Arial, sans-serif";
+              const fontFamily = activeFont
+                ? "BrandFont, sans-serif"
+                : "DejaVu Sans, Liberation Sans, Arial, sans-serif";
 
               // ── DESIGN-DRIVEN TEXT LAYOUT ─────────────────────────────────
               // Based on: Ambrose+Harris hierarchy, Lupton composition principles,
