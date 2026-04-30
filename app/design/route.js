@@ -77,12 +77,13 @@ async function generateVisualBrief(concept, postContent, brandUrl, websiteConten
     ? `\nPRODUCT IMAGES FOUND ON WEBSITE: ${imageUrls.join(", ")}\n(These are real product images from the brand's website)`
     : "";
 
+  // User's visual direction is TOP PRIORITY - must dominate the image
   const contextParts = [
-    concept ? `BRAND/PRODUCT INFO:\n${concept.slice(0, 800)}` : "",
-    websiteContent ? `BRAND WEBSITE CONTENT:\n${websiteContent.slice(0, 1200)}` : "",
+    userDirection ? `CRITICAL USER DIRECTION (this must be the main scene):\n${userDirection}` : "",
+    concept ? `BRAND/PRODUCT INFO:\n${concept.slice(0, 600)}` : "",
+    websiteContent ? `BRAND CONTEXT FROM WEBSITE:\n${websiteContent.slice(0, 800)}` : "",
     imageContext,
-    postContent ? `POST THEME:\n${postContent.slice(0, 300)}` : "",
-    userDirection ? `USER VISUAL DIRECTION:\n${userDirection}` : "",
+    postContent ? `POST THEME:\n${postContent.slice(0, 200)}` : "",
     feedbackNotes ? `REVISION FEEDBACK:\n${feedbackNotes}` : "",
   ].filter(Boolean).join("\n\n");
 
@@ -97,13 +98,14 @@ CONTEXT:
 ${contextParts}
 
 RULES:
-- Describe a SCENE or ATMOSPHERE that fits this brand — Imagen cannot render specific branded products from URLs
-- Be very specific: lighting, composition, colors, photography style, mood, materials
-- Reference real photographers/styles (e.g. "Kinfolk magazine", "shot by Annie Leibovitz")
-- NO text, logos, or labels in the image
+- IF the user gave a CRITICAL USER DIRECTION above — that scene MUST be the image. Don't deviate.
+- Be ultra-specific: exact lighting, composition, colors, photography style, mood, materials, time of day
+- Reference real photographers/styles (e.g. "Kinfolk magazine", "shot by Annie Leibovitz", "Vogue editorial")
+- The product from the brand context should appear naturally in the scene if direction mentions it
+- STRICTLY NO text, logos, watermarks, or labels visible anywhere in the image
 - 90-130 words maximum
 
-Write ONLY the prompt, no explanation.`
+Write ONLY the prompt, no explanation. Start directly with the scene.`
     }]
   });
   return msg.content[0].text.trim();
@@ -209,13 +211,10 @@ export async function POST(req) {
               }).join("");
 
               // Use user font if provided, else embedded Poppins, else system fallback
-              const activeFont = fontBase64 || embeddedFontB64;
-              const fontFaceCSS = activeFont
-                ? `@font-face { font-family: 'BrandFont'; src: url('data:font/truetype;base64,${activeFont}'); }`
-                : "";
-              const fontFamily = activeFont
-                ? "BrandFont, sans-serif"
-                : "DejaVu Sans, Liberation Sans, Arial, sans-serif";
+              // Ubuntu/DejaVu Sans support Polish chars natively on Vercel
+              // @font-face with base64 is unreliable with librsvg on serverless
+              const fontFaceCSS = "";
+              const fontFamily = "Ubuntu, DejaVu Sans, Liberation Sans, Noto Sans, sans-serif";
 
               // ── DESIGN-DRIVEN TEXT LAYOUT ─────────────────────────────────
               // Based on: Ambrose+Harris hierarchy, Lupton composition principles,
