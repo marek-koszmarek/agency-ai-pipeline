@@ -2,27 +2,38 @@
   "slug": "bean-buddies",
   "name": "Bean & Buddies",
   "colors": {
-    "primary": "#3D2314",
-    "secondary": "#F5E6D3",
-    "background": "#F5E6D3",
-    "text": "#3D2314"
+    "primary": "#000000",
+    "secondary": "#FFFFFF",
+    "background": "#FFFFFF",
+    "text": "#000000"
   },
-  "font": "Poppins-Bold",
-  "logo": { "position": "top_center", "maxWidthRatio": 0.25 },
+  "font": "RockwellNova-Bold",
+  "logo": {
+    "position": "bottom_center",
+    "maxWidthRatio": 0.4
+  },
   "text": {
     "placement": "golden_ratio",
-    "size_ratio": 0.06,
+    "size_ratio": 0.055,
     "weight": "700",
-    "color": "#3D2314",
-    "letter_spacing": 0
+    "color": "#000000",
+    "letter_spacing": 1
   },
   "product": {
     "position": "center",
-    "scale": 0.70,
+    "scale": 0.65,
     "drop_shadow": true,
-    "shadow_blur": 25,
-    "shadow_opacity": 0.3
+    "shadow_blur": 20,
+    "shadow_opacity": 0.2
   },
-  "background": { "type": "color", "value": "#F5E6D3" },
-  "formats": ["instagram_feed", "instagram_story", "instagram_square", "facebook_feed"]
+  "background": {
+    "type": "color",
+    "value": "#FFFFFF"
+  },
+  "formats": [
+    "instagram_feed",
+    "instagram_story",
+    "instagram_square",
+    "facebook_feed"
+  ]
 }
