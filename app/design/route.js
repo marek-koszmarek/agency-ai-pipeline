@@ -1,4 +1,5 @@
 import { generateImageWithGemini, FORMATS, getLogoPosition, getTextY } from "@/lib/designer";
+import opentype from "opentype.js";
 import Anthropic from "@anthropic-ai/sdk";
 import { POPPINS_BOLD_B64 } from "@/lib/font-data";
 
@@ -204,33 +205,55 @@ export async function POST(req) {
 
             // FIX 2: Text overlay — works even WITHOUT font (uses system Arial)
             if (textOnImage?.trim()) {
-              // Sharp text input (Pango) - works on Vercel, no system fonts needed
-              // SVG text via librsvg fails on Vercel - no fonts available in serverless env
+              // opentype.js: convert text to SVG vector paths
+              // No system fonts needed - font is parsed from embedded base64
+              const fontBuf = Buffer.from(embeddedFontB64, "base64");
+              const font = opentype.parse(fontBuf.buffer.slice(fontBuf.byteOffset, fontBuf.byteOffset + fontBuf.byteLength));
+
               const W = fmt.w;
               const H = fmt.h;
               const words = textOnImage.trim().split(/\s+/);
-              const fontSize = words.length <= 2 ? Math.floor(W * 0.10) : Math.floor(W * 0.055);
+              const fontSize = words.length <= 3 ? Math.floor(W * 0.07) : Math.floor(W * 0.05);
               const isLogoTop = logoPosition && logoPosition.includes("top");
-              const textY = isLogoTop ? Math.floor(H * 0.72) : Math.floor(H * 0.18);
+              const textY = isLogoTop ? Math.floor(H * 0.75) : Math.floor(H * 0.20);
 
-              const lines = words.length > 5
-                ? [words.slice(0, Math.ceil(words.length/2)).join(" "), words.slice(Math.ceil(words.length/2)).join(" ")]
-                : [textOnImage.trim()];
+              // Split long text into 2 lines
+              let lines;
+              if (words.length > 5) {
+                const mid = Math.ceil(words.length / 2);
+                lines = [words.slice(0, mid).join(" "), words.slice(mid).join(" ")];
+              } else {
+                lines = [textOnImage.trim()];
+              }
 
-              const bgH = lines.length > 1 ? Math.floor(fontSize * 2.8) : Math.floor(fontSize * 1.8);
-              const bgBuf = Buffer.alloc(W * bgH * 4);
-              for (let p = 0; p < W * bgH; p++) {
+              // Render each line as SVG path
+              const lineImgs = [];
+              for (const line of lines) {
+                const path = font.getPath(line, 0, fontSize, fontSize);
+                const b = path.getBoundingBox();
+                const pw = Math.ceil(b.x2 - b.x1) + 20;
+                const ph = Math.ceil(b.y2 - b.y1) + 20;
+                const pathSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="${pw}" height="${ph}">` +
+                  `<path d="${path.toPathData(2)}" fill="white" transform="translate(${Math.round(-b.x1+10)},${Math.round(-b.y1+10)})"/>` +
+                  `</svg>`;
+                const img = await sharp(Buffer.from(pathSvg)).png().toBuffer();
+                const meta = await sharp(img).metadata();
+                lineImgs.push({ img, w: meta.width, h: meta.height });
+              }
+
+              // Background band
+              const totalH = lineImgs.reduce((s, l) => s + l.h + 8, 0) + 24;
+              const bgBuf = Buffer.alloc(W * totalH * 4);
+              for (let p = 0; p < W * totalH; p++) {
                 bgBuf[p*4] = 0; bgBuf[p*4+1] = 0; bgBuf[p*4+2] = 0; bgBuf[p*4+3] = 110;
               }
-              composites.push({ input: bgBuf, raw: { width: W, height: bgH, channels: 4 }, top: textY, left: 0 });
+              composites.push({ input: bgBuf, raw: { width: W, height: totalH, channels: 4 }, top: textY, left: 0 });
 
-              for (let li = 0; li < lines.length; li++) {
-                const lineImg = await sharp({
-                  text: { text: '<span foreground="white">' + lines[li] + '</span>', rgba: true, width: W - 100, height: fontSize + 20 }
-                }).png().toBuffer();
-                const lMeta = await sharp(lineImg).metadata();
-                const lineTop = textY + Math.floor((bgH - fontSize * lines.length) / 2) + li * (fontSize + 10);
-                composites.push({ input: lineImg, top: Math.max(0, lineTop), left: Math.floor((W - lMeta.width) / 2) });
+              // Place text lines centered
+              let curY = textY + 12;
+              for (const { img, w: lw, h: lh } of lineImgs) {
+                composites.push({ input: img, top: curY, left: Math.floor((W - lw) / 2) });
+                curY += lh + 8;
               }
             }
 
