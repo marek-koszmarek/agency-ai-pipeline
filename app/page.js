@@ -29,11 +29,15 @@ const DESIGN_FORMATS = [
   { key: "instagram_square", label: "IG Square 1:1", w: 1080, h: 1080 },
   { key: "facebook_feed",    label: "FB Feed 4:5",   w: 1080, h: 1350 },
 ];
+const CLIENTS_LIST = [
+  { key: "m1",           label: "M1" },
+  { key: "bean-buddies", label: "Bean & Buddies" },
+];
 const AGENTS = {
-  researcher:     { icon: "🔍", name: "Researcher",  desc: "Analizuje rynek i insighty" },
-  creative:       { icon: "🎨", name: "Creative",    desc: "Tworzy koncepcje i strategie" },
-  analyst:        { icon: "📊", name: "Analyst",     desc: "Plan mediowy i budżety" },
-  social_content: { icon: "📱", name: "Social Agent",desc: "Posty i scenariusze rolek" },
+  researcher:     { icon: "🔍", name: "Researcher",   desc: "Analizuje rynek i insighty" },
+  creative:       { icon: "🎨", name: "Creative",     desc: "Tworzy koncepcje i strategie" },
+  analyst:        { icon: "📊", name: "Analyst",      desc: "Plan mediowy i budżety" },
+  social_content: { icon: "📱", name: "Social Agent", desc: "Posty i scenariusze rolek" },
 };
 const STEPS = {
   concept:  ["researcher","creative"],
@@ -43,7 +47,6 @@ const STEPS = {
   design:   [],
 };
 const ACCEPTED      = ".txt,.md,.pdf,.xlsx,.xls,.csv,.doc,.docx";
-const IMG_ACCEPTED  = ".png,.jpg,.jpeg,.webp";
 const FONT_ACCEPTED = ".ttf,.otf,.woff,.woff2";
 
 // ── HELPERS ───────────────────────────────────────────────────────
@@ -88,15 +91,7 @@ function FileOrPaste({ files, onFiles, text, onText, label, hint, accept = ACCEP
             <input ref={ref} type="file" accept={accept} multiple={!single}
               onChange={e => add(e.target.files)} />
             <div className="upload-icon">📎</div>
-            <div className="upload-label">Wgraj plik<br />
-          <span style={{color:"var(--text-dim)"}}>
-            {accept && (accept.includes("png") || accept.includes("jpg") || accept.includes("jpeg"))
-              ? "PNG, JPG, WebP..."
-              : accept && accept.includes("ttf")
-              ? "TTF, OTF, WOFF..."
-              : "PDF, Word, Excel, TXT..."}
-          </span>
-        </div>
+            <div className="upload-label">Wgraj plik<br /><span style={{color:"var(--text-dim)"}}>PDF, Word, Excel, TXT...</span></div>
           </div>
           {(files || []).length > 0 && (
             <div className="file-chips">
@@ -109,15 +104,19 @@ function FileOrPaste({ files, onFiles, text, onText, label, hint, accept = ACCEP
             </div>
           )}
         </div>
-        <div className="or-divider"><div className="or-line"/><div className="or-text">LUB</div><div className="or-line"/></div>
-        <div>
-          <textarea
-            className="field-textarea"
-            style={{ minHeight: 120 }}
-            value={text || ""}
-            onChange={e => onText(e.target.value)}
-            placeholder={textPlaceholder || hint || "Wklej lub wpisz treść tutaj..."} />
-        </div>
+        {onText !== null && (
+          <>
+            <div className="or-divider"><div className="or-line"/><div className="or-text">LUB</div><div className="or-line"/></div>
+            <div>
+              <textarea
+                className="field-textarea"
+                style={{ minHeight: 120 }}
+                value={text || ""}
+                onChange={e => onText(e.target.value)}
+                placeholder={textPlaceholder || hint || "Wklej lub wpisz treść tutaj..."} />
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
@@ -173,8 +172,6 @@ export default function Home() {
   const [socialProductFiles, setSocialProductFiles] = useState([]);
   const [socialTonality, setSocialTonality] = useState("same");
   const [researchBrand, setResearchBrand]   = useState(false);
-  const [brandUrl, setBrandUrl]             = useState("");
-  const [visualBrief, setVisualBrief]       = useState("");
 
   // ── Brief inputs ─────────────────────────────────────────────────
   const [briefText, setBriefText]           = useState("");
@@ -217,6 +214,11 @@ export default function Home() {
   const [feedbackText, setFeedbackText]     = useState("");
   const [designIteration, setDesignIteration] = useState(0);
 
+  // ── Istniejący klient state ───────────────────────────────────────
+  const [designMode, setDesignMode]         = useState("new_client");
+  const [selectedClient, setSelectedClient] = useState("m1");
+  const [productImageFile, setProductImageFile] = useState([]);
+
   const setAgent = (id, s) => setAgentStatus(p => ({ ...p, [id]: s }));
   const setResult = (id, c) => setResults(p => ({ ...p, [id]: c }));
 
@@ -234,6 +236,7 @@ export default function Home() {
     setLogoPosition("bottom_right"); setDesignText(""); setPostForDesign("");
     setSelectedFormats(["instagram_feed","instagram_story","instagram_square","facebook_feed"]);
     setDesignVariants([]); setDesignGenerating(false); setDesignError(""); setFeedbackText(""); setDesignIteration(0);
+    setDesignMode("new_client"); setSelectedClient("m1"); setProductImageFile([]);
   };
 
   const getFiles = () => {
@@ -305,11 +308,6 @@ export default function Home() {
     }
     setError(""); setView("running"); setAgentStatus({}); setResults({});
     try {
-      const socialContext = mode === "social" ? [
-        `Typ: ${SOCIAL_TYPES[socialType]}`,
-        `Fokus: ${SOCIAL_FOCUS[socialFocus]}`,
-        socialTonality ? `Tonalność: ${TONALITY_TYPES[socialTonality]}` : "",
-      ].filter(Boolean).join("\n") : "";
       const ok = await streamFromAPI({
         mode, brief: buildBriefText(), notes,
         socialType, socialFocus, socialProduct, socialTonality,
@@ -369,21 +367,15 @@ export default function Home() {
     }
   };
 
-  // ── Design ────────────────────────────────────────────────────────
+  // ── Design (Nowy klient — Imagen) ─────────────────────────────────
   const runDesign = async (iteration = 0, feedback = "") => {
     setDesignGenerating(true); setDesignError(""); setDesignVariants([]);
     try {
-      // For design, combine creative content + user visual direction
       const baseContent = mode === "design"
         ? (briefText || "")
         : (results.creative || results["social_content"] || results.researcher || briefText || "");
-      // Append visual direction if provided - this is pure visual guidance, not brief
       const concept = visualDirection
-        ? `VISUAL DIRECTION FROM USER:
-${visualDirection}
-
-CREATIVE CONCEPT:
-${baseContent}`
+        ? `VISUAL DIRECTION FROM USER:\n${visualDirection}\n\nCREATIVE CONCEPT:\n${baseContent}`
         : baseContent;
       const colors = brandColors.split(/[,\s]+/).filter(Boolean);
       const res = await fetch("/design", {
@@ -415,13 +407,48 @@ ${baseContent}`
           if (!line) continue;
           let ev;
           try { ev = JSON.parse(line); } catch (_) { continue; }
-          if (ev.status === "brief_ready" && ev.brief) setVisualBrief(ev.brief);
           if (ev.status === "variant_done") setDesignVariants(p => [...p, ev.data]);
-          if (ev.status === "done" && ev.visualBrief) setVisualBrief(ev.visualBrief);
           if (ev.status === "error") throw new Error(ev.message || "Błąd Gemini API");
         }
       }
       setDesignIteration(iteration + 1);
+    } catch (e) { setDesignError(e.message); }
+    finally { setDesignGenerating(false); }
+  };
+
+  // ── Render (Istniejący klient — Sharp) ────────────────────────────
+  const runRender = async () => {
+    setDesignGenerating(true); setDesignError(""); setDesignVariants([]);
+    try {
+      const res = await fetch("/render", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          clientSlug: selectedClient,
+          productImageBase64: productImageFile[0]?.base64 || null,
+          textOnImage: designText || null,
+          logoBase64: logoFile[0]?.base64 || null,
+          selectedFormats,
+        }),
+      });
+      if (!res.ok) throw new Error(`Błąd API (${res.status})`);
+      const reader = res.body.getReader();
+      const dec = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { done: sd, value } = await reader.read();
+        if (sd) break;
+        buf += dec.decode(value, { stream: true });
+        const parts = buf.split("\n\n"); buf = parts.pop();
+        for (const part of parts) {
+          const line = part.replace(/^data: /, "").trim();
+          if (!line) continue;
+          let ev;
+          try { ev = JSON.parse(line); } catch (_) { continue; }
+          if (ev.status === "variant_done") setDesignVariants(p => [...p, ev.data]);
+          if (ev.status === "error") throw new Error(ev.message || "Błąd renderowania");
+        }
+      }
+      setDesignIteration(designIteration + 1);
     } catch (e) { setDesignError(e.message); }
     finally { setDesignGenerating(false); }
   };
@@ -454,15 +481,7 @@ ${baseContent}`
 
   const currentTab = activeResultTab || allTabs[0]?.key;
 
-  // ── UI ─────────────────────────────────────────────────────────────
-  const isDesignMode = mode === "design";
   const currentMode = MODES.find(m => m.key === mode);
-
-  // Config form sections numbering
-  let secNum = 0;
-  const N = () => { secNum++; return secNum; };
-
-  // Running agents list
   const runningAgents = STEPS[mode] || [];
 
   return (
@@ -506,19 +525,21 @@ ${baseContent}`
         {view === "config" && (
           <>
             {/* BRIEF */}
-            <div className="section">
-              <div className="section-header">
-                <div className="section-num">01</div>
-                <div className="section-title">Brief</div>
-                <div className="section-hint">Opisz projekt lub wgraj plik briefu</div>
+            {mode !== "design" && (
+              <div className="section">
+                <div className="section-header">
+                  <div className="section-num">01</div>
+                  <div className="section-title">Brief</div>
+                  <div className="section-hint">Opisz projekt lub wgraj plik briefu</div>
+                </div>
+                <div className="section-body">
+                  <FileOrPaste
+                    files={briefFiles} onFiles={setBriefFiles}
+                    text={briefText} onText={setBriefText}
+                    textPlaceholder={"Marka:\nProdukt / usługa:\nCel kampanii:\nGrupa docelowa:\nBudżet:\nRynek / kraj:\nDodatkowe uwagi:"} />
+                </div>
               </div>
-              <div className="section-body">
-                <FileOrPaste
-                  files={briefFiles} onFiles={setBriefFiles}
-                  text={briefText} onText={setBriefText}
-                  textPlaceholder={"Marka:\nProdukt / usługa:\nCel kampanii:\nGrupa docelowa:\nBudżet:\nRynek / kraj:\nDodatkowe uwagi:"} />
-              </div>
-            </div>
+            )}
 
             {/* SOCIAL OPTIONS */}
             {mode === "social" && (
@@ -572,84 +593,147 @@ ${baseContent}`
               </div>
             )}
 
-                        {/* DESIGN OPTIONS */}
+            {/* DESIGN OPTIONS */}
             {mode === "design" && (
-              <div style={{ display:"flex", flexDirection:"column", gap:28 }}>
+              <div style={{ display:"flex", flexDirection:"column", gap:20 }}>
+
+                {/* TOGGLE: Nowy klient / Istniejący klient */}
                 <div className="section">
                   <div className="section-header">
-                    <div className="section-num">02</div>
-                    <div className="section-title">Kierunek wizualny</div>
-                    <div className="section-hint">opcjonalne</div>
+                    <div className="section-num">01</div>
+                    <div className="section-title">Tryb klienta</div>
                   </div>
                   <div className="section-body">
-                    <div className="field-label">Opisz jak ma wyglądać grafika</div>
-                    <textarea className="field-textarea" value={visualDirection}
-                      onChange={e => setVisualDirection(e.target.value)} style={{ minHeight: 70 }}
-                      placeholder="np. Minimalistyczne zdjecie produktu / Ciemne tlo ze zlotem / Lifestyle kobieta z kawa / Geometryczne ksztalty bold kolory" />
-                  </div>
-                  <div style={{ marginTop: 12 }}>
-                    <div className="field-label">URL strony marki (opcjonalnie)</div>
-                    <input className="field-input" value={brandUrl}
-                      onChange={e => setBrandUrl(e.target.value)}
-                      placeholder="https://nazwafirmy.pl — Roman przeskanuje stronę i zaciągnie styl i produkty" />
-                    <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
-                      Roman przeskanuje stronę, wyciągnie opisy produktów i styl wizualny marki
+                    <div className="pills">
+                      <Pill active={designMode === "new_client"} onClick={() => setDesignMode("new_client")}>🎨 Nowy klient</Pill>
+                      <Pill active={designMode === "existing_client"} onClick={() => setDesignMode("existing_client")}>👤 Istniejący klient</Pill>
                     </div>
                   </div>
                 </div>
-                <div className="section">
-                  <div className="section-header">
-                    <div className="section-num">03</div>
-                    <div className="section-title">Assety marki</div>
-                  </div>
-                  <div className="section-body" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-                    <div>
-                      <div className="field-label">Logo (PNG z przezroczystością)</div>
-                      <FileOrPaste files={logoFile} onFiles={setLogoFile} accept={".png,.jpg,.jpeg,.webp"} single
-                        text={null} onText={()=>{}} textPlaceholder="(tylko plik)" />
+
+                {/* ── NOWY KLIENT — pełny flow z Imagen ── */}
+                {designMode === "new_client" && (
+                  <>
+                    <div className="section">
+                      <div className="section-header">
+                        <div className="section-num">02</div>
+                        <div className="section-title">Kierunek wizualny</div>
+                        <div className="section-hint">opcjonalne</div>
+                      </div>
+                      <div className="section-body">
+                        <div className="field-label">Opisz jak ma wyglądać grafika</div>
+                        <textarea className="field-textarea" value={visualDirection}
+                          onChange={e => setVisualDirection(e.target.value)} style={{ minHeight: 70 }}
+                          placeholder="np. Minimalistyczne zdjecie produktu / Ciemne tlo ze zlotem / Lifestyle kobieta z kawa" />
+                      </div>
                     </div>
-                    <div className="grid-2">
+                    <div className="section">
+                      <div className="section-header">
+                        <div className="section-num">03</div>
+                        <div className="section-title">Assety marki</div>
+                      </div>
+                      <div className="section-body" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+                        <div>
+                          <div className="field-label">Logo (PNG z przezroczystością)</div>
+                          <FileOrPaste files={logoFile} onFiles={setLogoFile} accept={".png,.jpg,.jpeg,.webp"} single
+                            text={null} onText={null} textPlaceholder="(tylko plik)" />
+                        </div>
+                        <div className="grid-2">
+                          <div>
+                            <div className="field-label">Font marki (TTF, OTF)</div>
+                            <div className="upload-zone" style={{position:"relative"}} onClick={() => {}}>
+                              <input type="file" accept={FONT_ACCEPTED}
+                                onChange={async e => setFontFile(await prepFiles(e.target.files))}
+                                style={{position:"absolute",inset:0,opacity:0,cursor:"pointer"}} />
+                              <div className="upload-icon">🔤</div>
+                              <div className="upload-label">{fontFile[0]?.name || "Wgraj font TTF / OTF"}</div>
+                            </div>
+                          </div>
+                          <div>
+                            <div className="field-label">Kolory HEX</div>
+                            <textarea className="field-textarea" style={{minHeight:80}} value={brandColors}
+                              onChange={e=>setBrandColors(e.target.value)}
+                              placeholder="#7C3AED, #1A1A2E..." />
+                          </div>
+                        </div>
+                        <div>
+                          <div className="field-label">Pozycja logo</div>
+                          <div className="pills">
+                            {Object.entries(LOGO_POSITIONS).map(([k,v]) => (
+                              <Pill key={k} active={logoPosition===k} onClick={()=>setLogoPosition(k)}>{v}</Pill>
+                            ))}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="field-label">Tekst na grafice (opcjonalnie)</div>
+                          <input className="field-input" value={designText} onChange={e=>setDesignText(e.target.value)}
+                            placeholder='np. "Wpadaj TU, do M1 Marki"' />
+                        </div>
+                        <div>
+                          <div className="field-label">Formaty</div>
+                          <div className="pills">
+                            {DESIGN_FORMATS.map(f => (
+                              <Pill key={f.key} active={selectedFormats.includes(f.key)}
+                                onClick={() => setSelectedFormats(p => p.includes(f.key) ? p.filter(x=>x!==f.key) : [...p,f.key])}>
+                                {f.label}
+                              </Pill>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {/* ── ISTNIEJĄCY KLIENT — Sharp renderer ── */}
+                {designMode === "existing_client" && (
+                  <div className="section">
+                    <div className="section-header">
+                      <div className="section-num">02</div>
+                      <div className="section-title">Dane grafiki</div>
+                    </div>
+                    <div className="section-body" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
                       <div>
-                        <div className="field-label">Font marki (TTF, OTF)</div>
-                        <div className="upload-zone" onClick={() => {}}>
-                          <input type="file" accept={FONT_ACCEPTED} onChange={async e => setFontFile(await prepFiles(e.target.files))} style={{display:"block",opacity:0,position:"absolute"}} />
-                          <div className="upload-icon">🔤</div>
-                          <div className="upload-label">{fontFile[0]?.name || "Wgraj font TTF / OTF"}</div>
+                        <div className="field-label">Klient</div>
+                        <div className="pills">
+                          {CLIENTS_LIST.map(c => (
+                            <Pill key={c.key} active={selectedClient === c.key} onClick={() => setSelectedClient(c.key)}>
+                              {c.label}
+                            </Pill>
+                          ))}
                         </div>
                       </div>
                       <div>
-                        <div className="field-label">Kolory HEX</div>
-                        <textarea className="field-textarea" style={{minHeight:80}} value={brandColors}
-                          onChange={e=>setBrandColors(e.target.value)}
-                          placeholder="#7C3AED, #1A1A2E..." />
+                        <div className="field-label">Zdjęcie produktu</div>
+                        <FileOrPaste
+                          files={productImageFile}
+                          onFiles={setProductImageFile}
+                          accept=".png,.jpg,.jpeg,.webp"
+                          single
+                          text={null}
+                          onText={null}
+                          textPlaceholder="(tylko plik)" />
                       </div>
-                    </div>
-                    <div>
-                      <div className="field-label">Pozycja logo</div>
-                      <div className="pills">
-                        {Object.entries(LOGO_POSITIONS).map(([k,v]) => (
-                          <Pill key={k} active={logoPosition===k} onClick={()=>setLogoPosition(k)}>{v}</Pill>
-                        ))}
+                      <div>
+                        <div className="field-label">Tekst na grafice (opcjonalnie)</div>
+                        <input className="field-input" value={designText}
+                          onChange={e => setDesignText(e.target.value)}
+                          placeholder='np. "Wpadaj do M1 Marki"' />
                       </div>
-                    </div>
-                    <div>
-                      <div className="field-label">Tekst na grafice (opcjonalnie)</div>
-                      <input className="field-input" value={designText} onChange={e=>setDesignText(e.target.value)}
-                        placeholder='np. "Wpadaj TU, do M1 Marki"' />
-                    </div>
-                    <div>
-                      <div className="field-label">Formaty</div>
-                      <div className="pills">
-                        {DESIGN_FORMATS.map(f => (
-                          <Pill key={f.key} active={selectedFormats.includes(f.key)}
-                            onClick={() => setSelectedFormats(p => p.includes(f.key) ? p.filter(x=>x!==f.key) : [...p,f.key])}>
-                            {f.label}
-                          </Pill>
-                        ))}
+                      <div>
+                        <div className="field-label">Formaty</div>
+                        <div className="pills">
+                          {DESIGN_FORMATS.map(f => (
+                            <Pill key={f.key} active={selectedFormats.includes(f.key)}
+                              onClick={() => setSelectedFormats(p => p.includes(f.key) ? p.filter(x=>x!==f.key) : [...p,f.key])}>
+                              {f.label}
+                            </Pill>
+                          ))}
+                        </div>
                       </div>
                     </div>
                   </div>
-                </div>
+                )}
               </div>
             )}
 
@@ -694,9 +778,13 @@ ${baseContent}`
             <div className="generate-bar">
               <button className="btn-generate"
                 disabled={!briefText.trim() && briefFiles.length === 0 && mode !== "design"}
-                onClick={mode === "design" ? () => { setView("design_results"); runDesign(0,""); } : runPipeline}>
+                onClick={mode === "design"
+                  ? () => { setView("design_results"); designMode === "existing_client" ? runRender() : runDesign(0, ""); }
+                  : runPipeline}>
                 <span className="btn-icon">🚀</span>
-                {mode === "design" ? "Generuj Grafiki" : "Działaj Romek"}
+                {mode === "design"
+                  ? (designMode === "existing_client" ? "Generuj grafiki (szablon)" : "Generuj grafiki")
+                  : "Działaj Romek"}
               </button>
               {error && <div className="error-inline">⚠️ {error}</div>}
             </div>
@@ -726,7 +814,7 @@ ${baseContent}`
                   );
                 })}
               </div>
-              {error && <div style={{color:"var(--red)",fontSize:13,padding:"12px",background:"rgba(248,113,113,0.08)",borderRadius:10,border:"1px solid rgba(248,113,113,0.2)"}}>
+              {error && <div style={{color:"var(--red)",fontSize:13,padding:"12px",background:"rgba(248,113,113,0.08)",borderRadius:10,border:"1px solid rgba(248,113,113,0.2)",marginTop:16}}>
                 ⚠️ {error}
               </div>}
             </div>
@@ -761,7 +849,6 @@ ${baseContent}`
         {/* ═══ RESULTS VIEW ═══ */}
         {(view === "results" || view === "running_social") && view !== "clarification" && allTabs.length > 0 && (
           <div className="results-view">
-            {/* Results header */}
             <div className="results-header">
               <div className="results-title">
                 {currentMode?.emoji} {currentMode?.name} — wyniki
@@ -772,7 +859,6 @@ ${baseContent}`
               </div>
             </div>
 
-            {/* Tabs */}
             <div className="results-tabs">
               {allTabs.map(t => (
                 <button key={t.key} className={`result-tab${currentTab===t.key?" active":""}`}
@@ -783,7 +869,6 @@ ${baseContent}`
               ))}
             </div>
 
-            {/* Content */}
             <div className="result-content">
               {results[currentTab]
                 ? <div className="result-text">{results[currentTab]}</div>
@@ -793,34 +878,28 @@ ${baseContent}`
                   </div>}
             </div>
 
-            {/* Post-pipeline actions */}
             {view === "results" && (
               <div style={{ padding: "24px 40px", borderTop: "1px solid var(--border)", display: "flex", flexWrap: "wrap", gap: 12 }}>
-                {/* Analyst */}
                 {mode !== "ads" && mode !== "design" && wantsAnalyst === null && (
                   <>
                     <button className="btn-action" onClick={runAnalystNow}>📊 Dodaj plan reklamowy</button>
                     <button className="btn-action" onClick={()=>setWantsAnalyst(false)} style={{color:"var(--text-dim)"}}>Pomiń</button>
                   </>
                 )}
-                {/* Social from strategy */}
                 {(mode==="concept"||mode==="strategy") && wantsAnalyst!==null && wantsSocial===null && (
-                  <>
-                    <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
-                      <span style={{fontSize:13,color:"var(--text-muted)"}}>Dodaj posty/rolki:</span>
-                      {Object.entries(SOCIAL_TYPES).map(([k,v]) => (
-                        <Pill key={k} active={socialFromType===k} onClick={()=>setSocialFromType(k)}>{v}</Pill>
-                      ))}
-                      <button className="btn-action primary" onClick={()=>{setWantsSocial(true);runSocialFromStrategy();}}>Generuj</button>
-                      <button className="btn-action" onClick={()=>setWantsSocial(false)} style={{color:"var(--text-dim)"}}>Pomiń</button>
-                    </div>
-                  </>
+                  <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+                    <span style={{fontSize:13,color:"var(--text-muted)"}}>Dodaj posty/rolki:</span>
+                    {Object.entries(SOCIAL_TYPES).map(([k,v]) => (
+                      <Pill key={k} active={socialFromType===k} onClick={()=>setSocialFromType(k)}>{v}</Pill>
+                    ))}
+                    <button className="btn-action primary" onClick={()=>{setWantsSocial(true);runSocialFromStrategy();}}>Generuj</button>
+                    <button className="btn-action" onClick={()=>setWantsSocial(false)} style={{color:"var(--text-dim)"}}>Pomiń</button>
+                  </div>
                 )}
-                {/* Design */}
                 {(wantsAnalyst!==null || mode==="ads" || mode==="social") && (mode!=="concept"&&mode!=="strategy" || wantsSocial!==null) && (
                   <>
                     {visualDirection === "" && (
-                      <div style={{display:"flex",alignItems:"center",gap:8,flex:1}}>
+                      <div style={{display:"flex",alignItems:"center",gap:8,flex:1,minWidth:200}}>
                         <input className="field-input" style={{flex:1,fontSize:12}}
                           value={visualDirection}
                           onChange={e=>setVisualDirection(e.target.value)}
@@ -852,43 +931,39 @@ ${baseContent}`
             </div>
             <div className="result-content">
               {designGenerating && designVariants.length === 0 && (
-                <div>
-                  <div className="empty-state">
-                    <div className="empty-icon"><span className="spin">⟳</span></div>
-                    <div>Roman pisze brief → Imagen 4 Ultra generuje...</div>
-                    <div style={{fontSize:12,color:"var(--text-dim)"}}>30–60 sekund</div>
+                <div className="empty-state">
+                  <div className="empty-icon"><span className="spin">⟳</span></div>
+                  <div>
+                    {designMode === "existing_client"
+                      ? "Renderuję grafiki według szablonu klienta..."
+                      : "Gemini generuje wizualizacje..."}
                   </div>
-                  {visualBrief && (
-                    <div style={{margin:"16px 0",padding:"14px 18px",background:"var(--surface2)",border:"1px solid var(--border2)",borderRadius:10}}>
-                      <div style={{fontSize:10,letterSpacing:"1.5px",color:"var(--text-muted)",fontFamily:"monospace",marginBottom:8}}>BRIEF WIZUALNY ROMANA →</div>
-                      <div style={{fontSize:12,color:"var(--text-muted)",lineHeight:1.7,fontStyle:"italic"}}>{visualBrief}</div>
-                    </div>
-                  )}
+                  <div style={{fontSize:12,color:"var(--text-dim)"}}>To może zająć 15–60 sekund</div>
                 </div>
               )}
               {designError && (
                 <div style={{padding:20,background:"rgba(248,113,113,0.08)",border:"1px solid rgba(248,113,113,0.2)",borderRadius:12,color:"var(--red)",fontSize:13,marginBottom:20}}>
                   <strong>Błąd generowania:</strong><br/>{designError}
                   <div style={{marginTop:12,display:"flex",gap:8}}>
-                    <button className="btn-action" onClick={()=>{setDesignError("");runDesign(0,"");}}>Spróbuj ponownie</button>
+                    <button className="btn-action" onClick={() => {
+                      setDesignError("");
+                      designMode === "existing_client" ? runRender() : runDesign(0,"");
+                    }}>Spróbuj ponownie</button>
                   </div>
                 </div>
               )}
               {!designGenerating && designVariants.length === 0 && !designError && (
                 <div className="empty-state">
                   <div className="empty-icon">🖼️</div>
-                  <div>Brak wariantów. Kliknij "Generuj grafiki".</div>
-                  <button className="btn-action primary" style={{marginTop:12}} onClick={()=>runDesign(0,"")}>🎨 Generuj</button>
+                  <div>Brak wariantów. Kliknij "Generuj".</div>
+                  <button className="btn-action primary" style={{marginTop:12}}
+                    onClick={() => designMode === "existing_client" ? runRender() : runDesign(0,"")}>
+                    🎨 Generuj
+                  </button>
                 </div>
               )}
               {designVariants.length > 0 && (
                 <>
-                  {visualBrief && (
-                    <div style={{marginBottom:20,padding:"14px 18px",background:"var(--surface2)",border:"1px solid var(--border2)",borderRadius:10}}>
-                      <div style={{fontSize:10,letterSpacing:"1.5px",color:"var(--text-muted)",fontFamily:"monospace",marginBottom:6}}>BRIEF WIZUALNY → IMAGEN 4 ULTRA</div>
-                      <div style={{fontSize:12,color:"var(--text-muted)",lineHeight:1.7,fontStyle:"italic"}}>{visualBrief}</div>
-                    </div>
-                  )}
                   <div className="design-grid">
                     {designVariants.map((v,i) => (
                       <DesignVariant key={i} variant={v} variantNum={i+1} selectedFormats={selectedFormats} />
@@ -899,7 +974,7 @@ ${baseContent}`
                       <span className="spin">⟳</span> Generuje kolejne warianty...
                     </div>
                   )}
-                  {!designGenerating && (
+                  {!designGenerating && designMode === "new_client" && (
                     <div className="section" style={{marginTop:24}}>
                       <div className="section-header">
                         <div className="section-num">↻</div>
@@ -908,7 +983,7 @@ ${baseContent}`
                       <div className="section-body">
                         <textarea className="field-textarea" value={feedbackText}
                           onChange={e=>setFeedbackText(e.target.value)}
-                          placeholder="Co zmienić? np. Za ciemne tło, logo za małe, bardziej minimalistycznie, zmień kolory na ciepłe..." />
+                          placeholder="Co zmienić? np. Za ciemne tło, logo za małe, bardziej minimalistycznie..." />
                         <div style={{marginTop:12}}>
                           <button className="btn-generate" disabled={!feedbackText.trim()}
                             onClick={()=>{runDesign(designIteration,feedbackText);setFeedbackText("");}}>
