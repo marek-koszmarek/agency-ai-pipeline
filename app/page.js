@@ -88,7 +88,15 @@ function FileOrPaste({ files, onFiles, text, onText, label, hint, accept = ACCEP
             <input ref={ref} type="file" accept={accept} multiple={!single}
               onChange={e => add(e.target.files)} />
             <div className="upload-icon">📎</div>
-            <div className="upload-label">Wgraj plik<br /><span style={{color:"var(--text-dim)"}}>PDF, Word, Excel, TXT...</span></div>
+            <div className="upload-label">Wgraj plik<br />
+          <span style={{color:"var(--text-dim)"}}>
+            {accept && (accept.includes("png") || accept.includes("jpg") || accept.includes("jpeg"))
+              ? "PNG, JPG, WebP..."
+              : accept && accept.includes("ttf")
+              ? "TTF, OTF, WOFF..."
+              : "PDF, Word, Excel, TXT..."}
+          </span>
+        </div>
           </div>
           {(files || []).length > 0 && (
             <div className="file-chips">
