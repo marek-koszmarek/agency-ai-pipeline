@@ -219,6 +219,12 @@ export default function Home() {
   const [selectedClient, setSelectedClient] = useState("m1");
   const [productImageFile, setProductImageFile] = useState([]);
 
+  // ── Nowy klient brief ─────────────────────────────────────────────
+  const [newClientBrand, setNewClientBrand]   = useState("");
+  const [newClientProduct, setNewClientProduct] = useState("");
+  const [newClientGoal, setNewClientGoal]     = useState("awareness");
+  const [newClientUrl, setNewClientUrl]       = useState("");
+
   const setAgent = (id, s) => setAgentStatus(p => ({ ...p, [id]: s }));
   const setResult = (id, c) => setResults(p => ({ ...p, [id]: c }));
 
@@ -237,6 +243,7 @@ export default function Home() {
     setSelectedFormats(["instagram_feed","instagram_story","instagram_square","facebook_feed"]);
     setDesignVariants([]); setDesignGenerating(false); setDesignError(""); setFeedbackText(""); setDesignIteration(0);
     setDesignMode("new_client"); setSelectedClient("m1"); setProductImageFile([]);
+    setNewClientBrand(""); setNewClientProduct(""); setNewClientGoal("awareness"); setNewClientUrl("");
   };
 
   const getFiles = () => {
@@ -381,7 +388,13 @@ export default function Home() {
       const res = await fetch("/design", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          concept: concept.slice(0, 2000),
+          brandUrl: newClientUrl || brandUrl,
+          concept: [
+            newClientBrand ? `Marka: ${newClientBrand}` : "",
+            newClientProduct ? `Produkt: ${newClientProduct}` : "",
+            newClientGoal ? `Cel: ${newClientGoal}` : "",
+            briefText || "",
+          ].filter(Boolean).join("\n"),
           postContent: postForDesign,
           brandColors: colors,
           logoBase64: logoFile[0]?.base64 || null,
@@ -617,6 +630,43 @@ export default function Home() {
                     <div className="section">
                       <div className="section-header">
                         <div className="section-num">02</div>
+                        <div className="section-title">Brief klienta</div>
+                      </div>
+                      <div className="section-body" style={{ display:"flex", flexDirection:"column", gap:16 }}>
+                        <div className="grid-2">
+                          <div>
+                            <div className="field-label">Nazwa marki</div>
+                            <input className="field-input" value={newClientBrand}
+                              onChange={e => setNewClientBrand(e.target.value)}
+                              placeholder="np. Root7, Nike, Bean & Buddies" />
+                          </div>
+                          <div>
+                            <div className="field-label">Produkt / usługa</div>
+                            <input className="field-input" value={newClientProduct}
+                              onChange={e => setNewClientProduct(e.target.value)}
+                              placeholder="np. butelki termiczne, kawa speciality" />
+                          </div>
+                        </div>
+                        <div>
+                          <div className="field-label">Cel grafiki</div>
+                          <div className="pills">
+                            <button className={"pill" + (newClientGoal==="awareness" ? " active" : "")}
+                              onClick={() => setNewClientGoal("awareness")}>🎯 Awareness</button>
+                            <button className={"pill" + (newClientGoal==="sales" ? " active" : "")}
+                              onClick={() => setNewClientGoal("sales")}>💰 Sprzedaż</button>
+                          </div>
+                        </div>
+                        <div>
+                          <div className="field-label">URL strony klienta (Roman pobierze zdjęcia produktów)</div>
+                          <input className="field-input" value={newClientUrl}
+                            onChange={e => setNewClientUrl(e.target.value)}
+                            placeholder="https://nazwafirmy.pl — Roman pobierze zdjęcia produktów ze strony" />
+                        </div>
+                      </div>
+                    </div>
+                    <div className="section">
+                      <div className="section-header">
+                        <div className="section-num">03</div>
                         <div className="section-title">Kierunek wizualny</div>
                         <div className="section-hint">opcjonalne</div>
                       </div>
@@ -629,7 +679,7 @@ export default function Home() {
                     </div>
                     <div className="section">
                       <div className="section-header">
-                        <div className="section-num">03</div>
+                        <div className="section-num">04</div>
                         <div className="section-title">Assety marki</div>
                       </div>
                       <div className="section-body" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
