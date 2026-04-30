@@ -208,7 +208,7 @@ export async function POST(req) {
               // opentype.js: convert text to SVG vector paths
               // No system fonts needed - font is parsed from embedded base64
               const fontBuf = Buffer.from(embeddedFontB64, "base64");
-              const font = opentype.parse(fontBuf.buffer.slice(fontBuf.byteOffset, fontBuf.byteOffset + fontBuf.byteLength));
+              const font = opentype.default.parse(fontBuf.buffer.slice(fontBuf.byteOffset, fontBuf.byteOffset + fontBuf.byteLength));
 
               const W = fmt.w;
               const H = fmt.h;
