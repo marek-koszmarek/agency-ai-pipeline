@@ -28,7 +28,7 @@ export async function POST(req) {
       try {
         const variants = [];
 
-        send({ status: "rendering", message: "Renderuję wariant 1..." });
+        send({ status: "rendering", message: "Renderuje wariant 1..." });
         const formatResults1 = {};
         for (const formatKey of selectedFormats) {
           if (!FORMATS_RENDERER[formatKey]) continue;
@@ -44,7 +44,7 @@ export async function POST(req) {
         variants.push(variant1);
         send({ status: "variant_done", variant: 1, data: variant1 });
 
-        send({ status: "rendering", message: "Renderuję wariant 2..." });
+        send({ status: "rendering", message: "Renderuje wariant 2..." });
         const formatResults2 = {};
         for (const formatKey of selectedFormats) {
           if (!FORMATS_RENDERER[formatKey]) continue;
