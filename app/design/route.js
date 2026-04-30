@@ -141,12 +141,8 @@ export async function POST(req) {
 
         // Load embedded Poppins font — deployed in public/fonts/
         // Falls back gracefully if file not found
-        let embeddedFontB64 = null;
-        try {
-          const fontPath = path.join(process.cwd(), "public", "fonts", "Poppins-Bold.ttf");
-          const fontBuffer = fs.readFileSync(fontPath);
-          embeddedFontB64 = fontBuffer.toString("base64");
-        } catch { /* font not found — will use system fallback */ }
+        // Use pre-bundled Poppins Bold — guaranteed available on Vercel serverless
+        const embeddedFontB64 = POPPINS_BOLD_B64;
 
         // Step 1: Scrape brand website + get product images
         let websiteContent = "";
