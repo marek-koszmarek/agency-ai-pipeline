@@ -33,6 +33,22 @@ const CLIENTS_LIST = [
   { key: "m1",           label: "M1" },
   { key: "bean-buddies", label: "Bean & Buddies" },
 ];
+const CLIENT_CONFIGS = {
+  "m1": {
+    name: "M1",
+    colors: { primary: "#E30613", background: "#000000", text: "#FFFFFF" },
+    font: "Poppins Bold",
+    logoPosition: "Dół prawy",
+    textPlacement: "Pasmo dolne",
+  },
+  "bean-buddies": {
+    name: "Bean & Buddies",
+    colors: { primary: "#3D2314", background: "#F5E6D3", text: "#3D2314" },
+    font: "Poppins Bold",
+    logoPosition: "Góra centrum",
+    textPlacement: "Złoty podział",
+  },
+};
 const AGENTS = {
   researcher:     { icon: "🔍", name: "Researcher",   desc: "Analizuje rynek i insighty" },
   creative:       { icon: "🎨", name: "Creative",     desc: "Tworzy koncepcje i strategie" },
@@ -218,6 +234,7 @@ export default function Home() {
   const [designMode, setDesignMode]         = useState("new_client");
   const [selectedClient, setSelectedClient] = useState("m1");
   const [productImageFile, setProductImageFile] = useState([]);
+  const [clientLogoFile, setClientLogoFile]     = useState([]);
 
   // ── Nowy klient brief ─────────────────────────────────────────────
   const [newClientBrand, setNewClientBrand]   = useState("");
@@ -242,7 +259,7 @@ export default function Home() {
     setLogoPosition("bottom_right"); setDesignText(""); setPostForDesign("");
     setSelectedFormats(["instagram_feed","instagram_story","instagram_square","facebook_feed"]);
     setDesignVariants([]); setDesignGenerating(false); setDesignError(""); setFeedbackText(""); setDesignIteration(0);
-    setDesignMode("new_client"); setSelectedClient("m1"); setProductImageFile([]);
+    setDesignMode("new_client"); setSelectedClient("m1"); setProductImageFile([]); setClientLogoFile([]);
     setNewClientBrand(""); setNewClientProduct(""); setNewClientGoal("awareness"); setNewClientUrl("");
   };
 
@@ -439,7 +456,7 @@ export default function Home() {
           clientSlug: selectedClient,
           productImageBase64: productImageFile[0]?.base64 || null,
           textOnImage: designText || null,
-          logoBase64: logoFile[0]?.base64 || null,
+          logoBase64: clientLogoFile[0]?.base64 || null,
           selectedFormats,
         }),
       });
@@ -753,6 +770,43 @@ export default function Home() {
                           ))}
                         </div>
                       </div>
+
+                      {/* Szablon klienta — read-only */}
+                      <div style={{ padding:"16px 20px", background:"var(--surface2,rgba(255,255,255,0.04))", border:"1px solid var(--border2,rgba(255,255,255,0.08))", borderRadius:10 }}>
+                        <div style={{ fontSize:10, letterSpacing:"1.5px", color:"var(--text-muted)", fontFamily:"monospace", marginBottom:12 }}>ZASZYTY SZABLON KLIENTA →</div>
+                        <div className="grid-2" style={{ gap:12 }}>
+                          <div>
+                            <div className="field-label">Kolory</div>
+                            <div style={{ display:"flex", gap:8, alignItems:"center", marginTop:4 }}>
+                              {Object.entries(CLIENT_CONFIGS[selectedClient].colors).map(([k,v]) => (
+                                <div key={k} title={k + ": " + v} style={{ width:28, height:28, borderRadius:6, background:v, border:"1px solid rgba(255,255,255,0.15)", flexShrink:0 }} />
+                              ))}
+                              <span style={{ fontSize:12, color:"var(--text-muted)" }}>{CLIENT_CONFIGS[selectedClient].colors.primary}</span>
+                            </div>
+                          </div>
+                          <div>
+                            <div className="field-label">Font</div>
+                            <div style={{ fontSize:13, color:"var(--text-muted)", marginTop:4 }}>{CLIENT_CONFIGS[selectedClient].font}</div>
+                          </div>
+                          <div>
+                            <div className="field-label">Pozycja logo</div>
+                            <div style={{ fontSize:13, color:"var(--text-muted)", marginTop:4 }}>{CLIENT_CONFIGS[selectedClient].logoPosition}</div>
+                          </div>
+                          <div>
+                            <div className="field-label">Tekst placement</div>
+                            <div style={{ fontSize:13, color:"var(--text-muted)", marginTop:4 }}>{CLIENT_CONFIGS[selectedClient].textPlacement}</div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Logo override — opcjonalne */}
+                      <div>
+                        <div className="field-label">Logo klienta (opcjonalnie — nadpisuje szablon)</div>
+                        <FileOrPaste files={clientLogoFile} onFiles={setClientLogoFile}
+                          accept=".png,.jpg,.jpeg,.webp" single text={null} onText={null}
+                          textPlaceholder="(tylko plik)" />
+                      </div>
+
                       <div>
                         <div className="field-label">Zdjęcie produktu</div>
                         <FileOrPaste
