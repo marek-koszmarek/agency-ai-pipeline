@@ -204,89 +204,34 @@ export async function POST(req) {
 
             // FIX 2: Text overlay — works even WITHOUT font (uses system Arial)
             if (textOnImage?.trim()) {
-              // Encode ALL chars as XML numeric entities — handles Polish and special chars on Linux
-              const enc = (str) => str.split("").map(c => {
-                const code = c.charCodeAt(0);
-                return (code > 127 || c === "&" || c === "<" || c === ">" || c === '"') ? `&#${code};` : c;
-              }).join("");
-
-              // Use user font if provided, else embedded Poppins, else system fallback
-              // Ubuntu/DejaVu Sans support Polish chars natively on Vercel
-              // @font-face with base64 is unreliable with librsvg on serverless
-              const fontFaceCSS = "";
-              const fontFamily = "Ubuntu, DejaVu Sans, Liberation Sans, Noto Sans, sans-serif";
-
-              // ── DESIGN-DRIVEN TEXT LAYOUT ─────────────────────────────────
-              // Based on: Ambrose+Harris hierarchy, Lupton composition principles,
-              // Mahon (Art Direction), golden ratio, rule of thirds
-              const words = textOnImage.trim().split(/\s+/);
-              const charCount = textOnImage.trim().length;
+              // Sharp text input (Pango) - works on Vercel, no system fonts needed
+              // SVG text via librsvg fails on Vercel - no fonts available in serverless env
               const W = fmt.w;
               const H = fmt.h;
+              const words = textOnImage.trim().split(/\s+/);
+              const fontSize = words.length <= 2 ? Math.floor(W * 0.10) : Math.floor(W * 0.055);
+              const isLogoTop = logoPosition && logoPosition.includes("top");
+              const textY = isLogoTop ? Math.floor(H * 0.72) : Math.floor(H * 0.18);
 
-              let svgContent = "";
+              const lines = words.length > 5
+                ? [words.slice(0, Math.ceil(words.length/2)).join(" "), words.slice(Math.ceil(words.length/2)).join(" ")]
+                : [textOnImage.trim()];
 
-              if (words.length <= 2 && charCount <= 20) {
-                // SHORT TEXT (1-2 words): Large, centred, dominant typographic element
-                // Inspired by Bottega Veneta / Loewe outdoor advertising — luxury whisper
-                const fs = Math.floor(W * 0.11);
-                const y = Math.floor(H * 0.618); // golden ratio from top
-                svgContent = `
-                  <filter id="sh"><feDropShadow dx="0" dy="3" stdDeviation="8" flood-opacity="0.45"/></filter>
-                  <text x="${W/2}" y="${y}"
-                    font-family="${fontFamily}" font-size="${fs}" font-weight="300"
-                    letter-spacing="${Math.floor(fs * 0.18)}"
-                    fill="white" text-anchor="middle" filter="url(#sh)"
-                    opacity="0.95">${enc(textOnImage.trim().toUpperCase())}</text>`;
-
-              } else if (words.length <= 5 && charCount <= 40) {
-                // MEDIUM TEXT (3-5 words): Bold statement, rule of thirds placement
-                // Inspired by editorial magazine art direction — confident, clean
-                const fs = Math.floor(W * 0.072);
-                // Rule of thirds: lower third unless logo is there
-                const y = logoPosition.includes("bottom")
-                  ? Math.floor(H * 0.30) // place upper third if logo is bottom
-                  : Math.floor(H * 0.72); // lower third otherwise
-                const overlayH = fs + 52;
-                const overlayY = y - fs - 16;
-                svgContent = `
-                  <filter id="sh"><feDropShadow dx="0" dy="2" stdDeviation="6" flood-opacity="0.5"/></filter>
-                  <rect x="0" y="${overlayY}" width="${W}" height="${overlayH}"
-                    fill="black" fill-opacity="0.38"/>
-                  <text x="${W/2}" y="${y}"
-                    font-family="${fontFamily}" font-size="${fs}" font-weight="700"
-                    fill="white" text-anchor="middle" filter="url(#sh)">${enc(textOnImage.trim())}</text>`;
-
-              } else {
-                // LONG TEXT (6+ words): Split into two lines, smaller size, breathing room
-                // Based on Bly/Sugarman headline principles — legibility over decoration
-                const midWord = Math.ceil(words.length / 2);
-                const line1 = enc(words.slice(0, midWord).join(" "));
-                const line2 = enc(words.slice(midWord).join(" "));
-                const fs = Math.floor(W * 0.053);
-                const lineH = Math.floor(fs * 1.45);
-                const blockH = lineH * 2 + 60;
-                // Position: lower third, full-width band
-                const bandY = logoPosition.includes("top")
-                  ? Math.floor(H * 0.68)
-                  : Math.floor(H * 0.72);
-                svgContent = `
-                  <filter id="sh"><feDropShadow dx="0" dy="2" stdDeviation="5" flood-opacity="0.5"/></filter>
-                  <rect x="0" y="${bandY - fs - 20}" width="${W}" height="${blockH}"
-                    fill="black" fill-opacity="0.44"/>
-                  <text x="${W/2}" y="${bandY}"
-                    font-family="${fontFamily}" font-size="${fs}" font-weight="600"
-                    fill="white" text-anchor="middle" filter="url(#sh)">${line1}</text>
-                  <text x="${W/2}" y="${bandY + lineH}"
-                    font-family="${fontFamily}" font-size="${fs}" font-weight="400"
-                    fill="white" text-anchor="middle" filter="url(#sh)" opacity="0.9">${line2}</text>`;
+              const bgH = lines.length > 1 ? Math.floor(fontSize * 2.8) : Math.floor(fontSize * 1.8);
+              const bgBuf = Buffer.alloc(W * bgH * 4);
+              for (let p = 0; p < W * bgH; p++) {
+                bgBuf[p*4] = 0; bgBuf[p*4+1] = 0; bgBuf[p*4+2] = 0; bgBuf[p*4+3] = 110;
               }
+              composites.push({ input: bgBuf, raw: { width: W, height: bgH, channels: 4 }, top: textY, left: 0 });
 
-              const svgOverlay = `<svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg">
-                <defs><style>${fontFaceCSS}</style></defs>
-                ${svgContent}
-              </svg>`;
-              composites.push({ input: Buffer.from(svgOverlay), top: 0, left: 0 });
+              for (let li = 0; li < lines.length; li++) {
+                const lineImg = await sharp({
+                  text: { text: '<span foreground="white">' + lines[li] + '</span>', rgba: true, width: W - 100, height: fontSize + 20 }
+                }).png().toBuffer();
+                const lMeta = await sharp(lineImg).metadata();
+                const lineTop = textY + Math.floor((bgH - fontSize * lines.length) / 2) + li * (fontSize + 10);
+                composites.push({ input: lineImg, top: Math.max(0, lineTop), left: Math.floor((W - lMeta.width) / 2) });
+              }
             }
 
             // Logo overlay
