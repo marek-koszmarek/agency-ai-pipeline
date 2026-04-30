@@ -1,5 +1,6 @@
 import { generateImageWithGemini, FORMATS, getLogoPosition, getTextY } from "@/lib/designer";
 import Anthropic from "@anthropic-ai/sdk";
+import { POPPINS_BOLD_B64 } from "@/lib/font-data";
 
 export const maxDuration = 120;
 
