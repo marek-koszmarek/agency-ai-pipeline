@@ -1,5 +1,5 @@
 import { generateImageWithGemini, FORMATS, getLogoPosition, getTextY } from "@/lib/designer";
-import opentype from "opentype.js";
+import * as opentype from "opentype.js";
 import Anthropic from "@anthropic-ai/sdk";
 import { POPPINS_BOLD_B64 } from "@/lib/font-data";
 
