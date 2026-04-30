@@ -1,0 +1,28 @@
+{
+  "slug": "m1",
+  "name": "M1",
+  "colors": {
+    "primary": "#E30613",
+    "secondary": "#FFFFFF",
+    "background": "#000000",
+    "text": "#FFFFFF"
+  },
+  "font": "Poppins-Bold",
+  "logo": { "position": "bottom_right", "maxWidthRatio": 0.20 },
+  "text": {
+    "placement": "bottom_band",
+    "size_ratio": 0.055,
+    "weight": "700",
+    "color": "#FFFFFF",
+    "letter_spacing": 2
+  },
+  "product": {
+    "position": "center",
+    "scale": 0.65,
+    "drop_shadow": true,
+    "shadow_blur": 30,
+    "shadow_opacity": 0.4
+  },
+  "background": { "type": "color", "value": "#000000" },
+  "formats": ["instagram_feed", "instagram_story", "instagram_square", "facebook_feed"]
+}
