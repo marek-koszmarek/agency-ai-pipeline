@@ -53,8 +53,7 @@ async function generateWithImagen(prompt, apiKey) {
 }
 
 // ─────────────────────────────────────────────────────────────────
-// Claude Vision: opisuje produkt ze zdjęcia słowami
-// Wynik trafia do prompta jako opis tego co jest na obrazie.
+// Claude Vision: opisuje produkt ze zdjęcia słowami (po angielsku)
 // ─────────────────────────────────────────────────────────────────
 async function describeProduct(productBase64, apiKey) {
   const client = new Anthropic({ apiKey });
@@ -70,12 +69,38 @@ async function describeProduct(productBase64, apiKey) {
         },
         {
           type: "text",
-          text: `Describe this product visually in 20-30 words for an image generation prompt.
-Only: shape, color, material, distinctive features. No brand names, no logos.
-Example: "matte black cylindrical stainless steel thermal bottle, 25cm, smooth brushed finish, silver cap"
-Write ONLY the description:`,
+          text: `Describe this product visually in 20-30 words for an AI image generation prompt.
+Only describe: shape, color, material, surface texture, size, distinctive features.
+Do NOT mention brand names, logos, or text on packaging.
+Example output: "matte black cylindrical stainless steel thermal bottle, approximately 25cm tall, smooth brushed surface, silver metallic threaded cap"
+Write ONLY the description in English:`,
         },
       ],
+    }]
+  });
+  return msg.content[0].text.trim();
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Claude: tłumaczy scenę usera na angielski z zachowaniem płci
+// Modele generatywne rozumieją gender TYLKO po angielsku.
+// "kobieta" nie gwarantuje kobiety — "a woman" tak.
+// ─────────────────────────────────────────────────────────────────
+async function translateSceneToEnglish(scenePolish, apiKey) {
+  const client = new Anthropic({ apiKey });
+  const msg = await client.messages.create({
+    model: "claude-sonnet-4-6",
+    max_tokens: 100,
+    messages: [{
+      role: "user",
+      content: `Translate this scene description to English for an image generation AI.
+CRITICAL: Preserve the exact gender (kobieta=woman, mężczyzna=man, dziewczyna=girl, chłopak=young man).
+Start your translation with the gender explicitly: "A woman...", "A man...", etc.
+Keep all scene details, actions, objects. Remove brand names.
+
+Scene: "${scenePolish}"
+
+Write ONLY the English translation, nothing else:`,
     }]
   });
   return msg.content[0].text.trim();
@@ -165,13 +190,57 @@ export async function POST(req) {
         }
 
         // ── KROK 2: Buduj prompt ───────────────────────────────────
-        // Scena pochodzi dosłownie od usera — usuwamy tylko nazwę marki
-        // (GPT-image-1 widzi produkt ze zdjęcia — nie musi go odgadywać)
-        const sceneBase = visualDirection
+        // Scena usera jest tłumaczona na angielski z zachowaniem płci.
+        // "kobieta" → "A woman" — modele obrazowe rozumieją gender TYLKO po angielsku.
+        const scenePolish = visualDirection
           .replace(/\broot7\b/gi, "")
           .replace(/\bbean\s*&?\s*buddies\b/gi, "")
           .replace(/\s+/g, " ")
           .trim();
+
+        let sceneEnglish = scenePolish; // fallback: oryginalny tekst
+        if (scenePolish && ANTHROPIC_API_KEY) {
+          send({ status: "thinking", message: "Tłumaczę scenę dla modelu obrazowego..." });
+          try {
+            sceneEnglish = await translateSceneToEnglish(scenePolish, ANTHROPIC_API_KEY);
+          } catch {
+            // Ręczna zamiana kluczowych słów polskich jako fallback
+            sceneEnglish = scenePolish
+              // Płeć — KRYTYCZNE
+              .replace(/\bkobieta\b/gi, "a woman")
+              .replace(/\bkobiety\b/gi, "woman's")
+              .replace(/\bmężczyzna\b/gi, "a man")
+              .replace(/\bdziewczyna\b/gi, "a young woman")
+              .replace(/\bchłopak\b/gi, "a young man")
+              .replace(/\bpani\b/gi, "a woman")
+              .replace(/\bpan\b/gi, "a man")
+              // Czynności
+              .replace(/\bodpoczywając[aą]?\b/gi, "relaxing")
+              .replace(/\bpracując[aą]?\b/gi, "working")
+              .replace(/\bsiedzącą?\b/gi, "sitting")
+              .replace(/\bstojącą?\b/gi, "standing")
+              .replace(/\buśmiechniętą?\b/gi, "smiling")
+              .replace(/\bpiją[cca]?\b/gi, "drinking")
+              .replace(/\btrzymając[aą]?\b/gi, "holding")
+              // Kontekst
+              .replace(/\bpo pracy\b/gi, "after work")
+              .replace(/\bw biurze\b/gi, "in an office")
+              .replace(/\bw kawiarni\b/gi, "in a cafe")
+              .replace(/\bw domu\b/gi, "at home")
+              .replace(/\bna zewnątrz\b/gi, "outdoors")
+              // Produkty (wielowyrazowe PRZED jednowyrazowymi — ważna kolejność)
+              .replace(/z butelką termiczną/gi, "holding a thermal bottle")
+              .replace(/z kubkiem termicznym/gi, "holding a thermal mug")
+              .replace(/z butelką/gi, "holding a bottle")
+              .replace(/z kubkiem/gi, "holding a cup")
+              .replace(/termiczn[ąa]/gi, "thermal")
+              .replace(/butelk[ąi]/gi, "bottle")
+              .replace(/kubek/gi, "cup")
+              .replace(/kaw[ąąę]/gi, "coffee")
+              .replace(/ręku/gi, "hand")
+              .replace(/w ręku/gi, "in hand");
+          }
+        }
 
         const colorStr = brandColors.length ? ` Color palette: ${brandColors.join(", ")}.` : "";
         const logoCorner = logoPosition === "roman" ? "bottom-right" : logoPosition.replace("_", " ");
@@ -179,33 +248,36 @@ export async function POST(req) {
         let imagenPrompt, gptPrompt;
 
         if (productPngBuf && OPENAI_API_KEY) {
-          // GPT-image-1: widzi produkt ze zdjęcia — prompt opisuje SCENĘ i OSOBĘ
-          // Produkt jest przekazany jako obraz — model sam go wkomponuje naturalnie
+          // GPT-image-1 z referencją produktu
+          // Model WIDZI zdjęcie produktu — scena angielska opisuje resztę
           gptPrompt =
-            `Professional advertising lifestyle photograph. ` +
-            `${sceneBase ? sceneBase + ". " : ""}` +
-            `The product shown in the reference image is held or used naturally in this scene. ` +
-            `Photorealistic, 85mm lens, natural warm light, editorial quality.` +
-            `${colorStr} Keep ${logoCorner} corner clear for logo. No text, no logos, no watermarks in image.`;
+            `${sceneEnglish ? sceneEnglish + " " : "Professional advertising lifestyle photograph. "}` +
+            `The product shown in the reference image is the item being held or used. ` +
+            `Integrate the reference product naturally into the scene. ` +
+            `Photorealistic advertising photography, 85mm lens, natural warm light, Kinfolk editorial style.` +
+            `${colorStr} Keep ${logoCorner} corner clear for logo overlay. ` +
+            `STRICTLY NO text, logos, watermarks anywhere in the generated image.`;
 
-          send({ status: "brief_ready", brief: gptPrompt });
-          send({ status: "generating", message: "GPT-image-1 generuje scenę z produktem..." });
+          send({ status: "brief_ready", brief: `[GPT-image-1 + produkt] ${sceneEnglish}` });
+          send({ status: "generating", message: "GPT-image-1 generuje scenę z Twoim produktem..." });
 
         } else {
-          // Fallback: Imagen bez referencji produktu
-          // Jeśli mamy opis produktu z Claude Vision, dodajemy go do promptu
+          // Imagen fallback — bez referencji wizualnej produktu
+          if (!productPngBuf) {
+            send({ status: "scraping", message: "⚠️ Brak zdjęcia produktu — generuję bez referencji. Wgraj zdjęcie produktu dla lepszych wyników." });
+          }
           const productHint = productDescription
-            ? `The person is naturally holding or using: ${productDescription}.`
+            ? `The person naturally holds or uses: ${productDescription}.`
             : "";
 
           imagenPrompt =
-            `STRICTLY NO text, letters, numbers, words, overlays or dark bands anywhere.\n\n` +
-            `${sceneBase ? sceneBase + ". " : "Professional lifestyle advertising photograph. "}` +
+            `STRICTLY NO text, letters, numbers, words, overlays or dark bands anywhere in the image.\n\n` +
+            `${sceneEnglish ? sceneEnglish + ". " : "Professional lifestyle advertising photograph. "}` +
             `${productHint} ` +
-            `Professional advertising photography, 85mm f/1.4, natural warm light, editorial quality.` +
+            `Professional advertising photography, 85mm f/1.4, natural warm light, Kinfolk editorial style.` +
             `${colorStr} Keep ${logoCorner} corner clear. No watermarks.`;
 
-          send({ status: "brief_ready", brief: imagenPrompt });
+          send({ status: "brief_ready", brief: `[Imagen] ${sceneEnglish}` });
           send({ status: "generating", message: "Imagen 4 Ultra generuje scenę..." });
         }
 
