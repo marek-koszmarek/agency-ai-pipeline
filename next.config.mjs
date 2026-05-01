@@ -5,5 +5,6 @@ const nextConfig = {
       bodySizeLimit: '10mb',
     },
   },
+  serverExternalPackages: ['sharp', 'opentype.js'],
 };
 export default nextConfig;
