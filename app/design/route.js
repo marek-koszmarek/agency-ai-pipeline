@@ -1,6 +1,6 @@
 import { createRequire } from "module";
 const _require = createRequire(import.meta.url);
-import { generateImageWithGemini, FORMATS, getLogoPosition } from "@/lib/designer";
+import { FORMATS, getLogoPosition } from "@/lib/designer";
 import Anthropic from "@anthropic-ai/sdk";
 import { POPPINS_BOLD_B64 } from "@/lib/font-data";
 
@@ -8,7 +8,83 @@ export const maxDuration = 120;
 
 function sse(obj) { return `data: ${JSON.stringify(obj)}\n\n`; }
 
-// Scrape — tylko tekst o marce, bez pobierania obrazow
+// ─────────────────────────────────────────────────────────────────
+// BACKEND 1: GPT-image-1 /images/edits
+// Używany gdy user wgrał zdjęcie produktu LUB pobrano je ze strony.
+// Przyjmuje zdjęcie produktu jako input → generuje scenę z tym produktem.
+// To jest architektura Photoroom ("lifestyle shots from a single product photo").
+// ─────────────────────────────────────────────────────────────────
+async function generateWithProductReference(productPngBuf, prompt, apiKey) {
+  // Node 20 (Vercel/Next.js 15) natywne FormData + File — brak zewnętrznych zależności
+  const form = new FormData();
+  const productBlob = new Blob([productPngBuf], { type: "image/png" });
+  form.append("image[]", new File([productBlob], "product.png", { type: "image/png" }));
+  form.append("model", "gpt-image-1");
+  form.append("prompt", prompt);
+  form.append("size", "1024x1024");
+  form.append("quality", "medium");
+  form.append("n", "1");
+
+  const res = await fetch("https://api.openai.com/v1/images/edits", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      // Content-Type jest ustawiany automatycznie przez fetch z boundary
+    },
+    body: form,
+    signal: AbortSignal.timeout(90000),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`GPT-image-1 error ${res.status}: ${err}`);
+  }
+  const data = await res.json();
+  return data.data[0].b64_json;
+}
+
+// ─────────────────────────────────────────────────────────────────
+// BACKEND 2: Imagen 4 Ultra (fallback — brak zdjęcia produktu)
+// Używany tylko gdy nie ma zdjęcia produktu do referencji.
+// ─────────────────────────────────────────────────────────────────
+async function generateWithImagen(prompt, apiKey) {
+  const { generateImageWithGemini } = await import("@/lib/designer");
+  return generateImageWithGemini(prompt, apiKey);
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Claude Vision: opisuje produkt ze zdjęcia słowami
+// Wynik trafia do prompta jako opis tego co jest na obrazie.
+// ─────────────────────────────────────────────────────────────────
+async function describeProduct(productBase64, apiKey) {
+  const client = new Anthropic({ apiKey });
+  const msg = await client.messages.create({
+    model: "claude-sonnet-4-6",
+    max_tokens: 80,
+    messages: [{
+      role: "user",
+      content: [
+        {
+          type: "image",
+          source: { type: "base64", media_type: "image/jpeg", data: productBase64 },
+        },
+        {
+          type: "text",
+          text: `Describe this product visually in 20-30 words for an image generation prompt.
+Only: shape, color, material, distinctive features. No brand names, no logos.
+Example: "matte black cylindrical stainless steel thermal bottle, 25cm, smooth brushed finish, silver cap"
+Write ONLY the description:`,
+        },
+      ],
+    }]
+  });
+  return msg.content[0].text.trim();
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Scrape — tylko tekst, bez pobierania obrazów
+// (obrazy dostarcza user przez upload — scraping był problemem)
+// ─────────────────────────────────────────────────────────────────
 async function scrapeBrandText(url) {
   if (!url || !url.startsWith("http")) return "";
   try {
@@ -22,83 +98,10 @@ async function scrapeBrandText(url) {
       .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
       .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
       .replace(/<[^>]+>/g, " ")
-      .replace(/\s+/g, " ").trim().slice(0, 2000);
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 1500);
   } catch { return ""; }
-}
-
-// KROK 1: Claude Vision opisuje produkt ze zdjecia
-// Zwraca precyzyjny opis wizualny — kolor, ksztalt, material, szczegoly
-// Ten opis zastepuje zdjecie — trafia do promptu Imagena jako opis produktu
-async function describeProductFromImage(productBase64, productName, apiKey) {
-  const client = new Anthropic({ apiKey });
-  const msg = await client.messages.create({
-    model: "claude-sonnet-4-6",
-    max_tokens: 150,
-    messages: [{
-      role: "user",
-      content: [
-        {
-          type: "image",
-          source: { type: "base64", media_type: "image/jpeg", data: productBase64 },
-        },
-        {
-          type: "text",
-          text: `Describe this product visually for an image generation AI prompt.
-Focus ONLY on: shape, color, material, surface texture, distinctive features, approximate size.
-Do NOT mention brand names, logos, text on packaging.
-Maximum 40 words. Be specific and visual.
-Example: "matte black cylindrical stainless steel thermal bottle, approximately 25cm tall, smooth brushed surface, silver metallic threaded cap with rounded top"
-Write ONLY the visual product description:`,
-        },
-      ],
-    }]
-  });
-  return msg.content[0].text.trim();
-}
-
-// KROK 2: Claude buduje kompletny prompt dla Imagena
-// Laczy: scene usera + opis produktu + styl fotograficzny
-// Imagen generuje CALA scene — osoba + produkt + otoczenie — wszystko naraz
-async function buildImagenPrompt(visualDirection, productDescription, brandContext, feedbackNotes, apiKey) {
-  const client = new Anthropic({ apiKey });
-
-  const productHint = productDescription
-    ? `The person is holding or has nearby: ${productDescription}`
-    : "";
-
-  const contextBlock = [
-    brandContext ? `Brand context: ${brandContext.slice(0, 200)}` : "",
-    feedbackNotes ? `Revision notes: ${feedbackNotes}` : "",
-  ].filter(Boolean).join(" | ");
-
-  const msg = await client.messages.create({
-    model: "claude-sonnet-4-6",
-    max_tokens: 180,
-    messages: [{
-      role: "user",
-      content: `Write a single Imagen 4 Ultra image generation prompt. The entire image — person, product, setting — must be generated together in one shot. No compositing.
-
-SCENE: "${visualDirection}"
-${productHint ? `PRODUCT IN SCENE: ${productHint}` : ""}
-${contextBlock ? `CONTEXT: ${contextBlock}` : ""}
-
-Rules:
-- Start with the scene description verbatim, keep the gender/person exactly as stated
-- Integrate the product naturally into the scene (held, on table nearby, etc.)
-- Add: photography style, lens, lighting, color grading, mood reference (photographer/magazine)
-- 60-90 words total
-- STRICTLY NO text, letters, logos, watermarks, overlays, dark bands in image
-
-Write ONLY the prompt, no explanation:`,
-    }]
-  });
-  return msg.content[0].text.trim();
-}
-
-// Fallback prompt gdy brak visualDirection i brak produktu
-function buildNeutralPrompt(concept, brandColors) {
-  const colorStr = brandColors.length ? ` Color palette: ${brandColors.join(", ")}.` : "";
-  return `Professional lifestyle advertising photograph, premium product in elegant modern setting, natural light, 85mm f/1.4, Kinfolk magazine editorial style, muted tones, clean composition.${colorStr}`;
 }
 
 export async function POST(req) {
@@ -116,9 +119,14 @@ export async function POST(req) {
     selectedFormats = ["instagram_feed", "instagram_story", "instagram_square", "facebook_feed"],
   } = body;
 
+  const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
   const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
   const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
-  if (!GOOGLE_API_KEY) throw new Error("Brak GOOGLE_API_KEY");
+
+  // Musimy mieć co najmniej jeden backend do generowania
+  if (!OPENAI_API_KEY && !GOOGLE_API_KEY) {
+    throw new Error("Brak OPENAI_API_KEY i GOOGLE_API_KEY — potrzebny minimum jeden");
+  }
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -129,80 +137,123 @@ export async function POST(req) {
         const sharp = (await import("sharp")).default;
         const embeddedFontB64 = POPPINS_BOLD_B64;
 
-        // KROK 1: Opisz produkt slowami (Claude Vision)
-        // Jezeli user wgral zdjecie produktu — Claude opisuje go precyzyjnie
-        // Ten opis trafi do promptu Imagena — produkt bedzie naturalnie w scenie
+        // ── KROK 1: Przygotuj zdjęcie produktu ────────────────────
+        let productPngBuf = null;
         let productDescription = "";
-        if (productImageBase64 && ANTHROPIC_API_KEY) {
-          send({ status: "scraping", message: "Analizuję zdjęcie produktu..." });
-          try {
-            productDescription = await describeProductFromImage(
-              productImageBase64, concept, ANTHROPIC_API_KEY
-            );
-            send({ status: "scraping", message: `Produkt opisany: ${productDescription.slice(0, 60)}...` });
-          } catch {
-            send({ status: "scraping", message: "Nie udało się opisać produktu — generuję bez opisu" });
+
+        if (productImageBase64) {
+          send({ status: "scraping", message: "Przygotowuję zdjęcie produktu..." });
+          const rawBuf = Buffer.from(productImageBase64, "base64");
+          productPngBuf = await sharp(rawBuf).png().toBuffer();
+
+          // Claude Vision opisuje produkt — opis trafi też do Imagena jako fallback
+          if (ANTHROPIC_API_KEY) {
+            try {
+              productDescription = await describeProduct(productImageBase64, ANTHROPIC_API_KEY);
+              send({ status: "scraping", message: `Produkt rozpoznany: ${productDescription.slice(0, 60)}...` });
+            } catch {
+              productDescription = "thermal bottle product";
+            }
           }
         }
 
-        // Pobierz tekst ze strony (tylko jako kontekst marki, nie obrazy)
-        let brandContext = concept;
+        // Scraping — tylko jako kontekst marki, nie do pobierania zdjęć
+        let brandContext = concept || "";
         if (brandUrl && !brandContext) {
-          send({ status: "scraping", message: `Skanuję ${brandUrl}...` });
+          send({ status: "scraping", message: `Skanuję kontekst marki z ${brandUrl}...` });
           brandContext = await scrapeBrandText(brandUrl);
         }
 
-        // KROK 2: Zbuduj prompt dla Imagena
-        // Cala logika: scena + produkt + styl — w jednym prompcie
-        send({ status: "thinking", message: "Buduję prompt dla Imagena..." });
-        let imagenScenePrompt = "";
+        // ── KROK 2: Buduj prompt ───────────────────────────────────
+        // Scena pochodzi dosłownie od usera — usuwamy tylko nazwę marki
+        // (GPT-image-1 widzi produkt ze zdjęcia — nie musi go odgadywać)
+        const sceneBase = visualDirection
+          .replace(/\broot7\b/gi, "")
+          .replace(/\bbean\s*&?\s*buddies\b/gi, "")
+          .replace(/\s+/g, " ")
+          .trim();
 
-        if (visualDirection && ANTHROPIC_API_KEY) {
-          try {
-            imagenScenePrompt = await buildImagenPrompt(
-              visualDirection, productDescription, brandContext, feedbackNotes, ANTHROPIC_API_KEY
-            );
-          } catch {
-            // Fallback: manualnie polacz scene + opis produktu
-            const cleanScene = visualDirection.replace(/\broot7\b/gi, "").replace(/\bbean\s*&?\s*buddies\b/gi, "").trim();
-            imagenScenePrompt = `${cleanScene}${productDescription ? `, holding ${productDescription}` : ""}. Professional advertising photography, 85mm f/1.4, warm natural light, Kinfolk editorial style.`;
-          }
-        } else {
-          imagenScenePrompt = buildNeutralPrompt(brandContext, brandColors);
-        }
-
-        send({ status: "brief_ready", brief: imagenScenePrompt });
-
-        // KROK 3: Finalny prompt — dodaj globalne zakazy i miejsce na logo
         const colorStr = brandColors.length ? ` Color palette: ${brandColors.join(", ")}.` : "";
         const logoCorner = logoPosition === "roman" ? "bottom-right" : logoPosition.replace("_", " ");
 
-        const imagenPrompt =
-          `STRICTLY NO text, letters, numbers, words, overlays or dark bands anywhere in the image.\n\n` +
-          `${imagenScenePrompt}${colorStr} ` +
-          `Keep ${logoCorner} corner clear for logo placement. No watermarks.`;
+        let imagenPrompt, gptPrompt;
 
-        send({ status: "generating", message: "Imagen 4 Ultra generuje scenę z produktem..." });
+        if (productPngBuf && OPENAI_API_KEY) {
+          // GPT-image-1: widzi produkt ze zdjęcia — prompt opisuje SCENĘ i OSOBĘ
+          // Produkt jest przekazany jako obraz — model sam go wkomponuje naturalnie
+          gptPrompt =
+            `Professional advertising lifestyle photograph. ` +
+            `${sceneBase ? sceneBase + ". " : ""}` +
+            `The product shown in the reference image is held or used naturally in this scene. ` +
+            `Photorealistic, 85mm lens, natural warm light, editorial quality.` +
+            `${colorStr} Keep ${logoCorner} corner clear for logo. No text, no logos, no watermarks in image.`;
 
-        // KROK 4: Generuj 2 warianty
-        // Imagen generuje CALA scene — Sharp TYLKO tekst + logo (brak composite produktu)
+          send({ status: "brief_ready", brief: gptPrompt });
+          send({ status: "generating", message: "GPT-image-1 generuje scenę z produktem..." });
+
+        } else {
+          // Fallback: Imagen bez referencji produktu
+          // Jeśli mamy opis produktu z Claude Vision, dodajemy go do promptu
+          const productHint = productDescription
+            ? `The person is naturally holding or using: ${productDescription}.`
+            : "";
+
+          imagenPrompt =
+            `STRICTLY NO text, letters, numbers, words, overlays or dark bands anywhere.\n\n` +
+            `${sceneBase ? sceneBase + ". " : "Professional lifestyle advertising photograph. "}` +
+            `${productHint} ` +
+            `Professional advertising photography, 85mm f/1.4, natural warm light, editorial quality.` +
+            `${colorStr} Keep ${logoCorner} corner clear. No watermarks.`;
+
+          send({ status: "brief_ready", brief: imagenPrompt });
+          send({ status: "generating", message: "Imagen 4 Ultra generuje scenę..." });
+        }
+
+        // ── KROK 3: Generuj 2 warianty ────────────────────────────
         const variants = [];
+        const useGPT = !!(productPngBuf && OPENAI_API_KEY);
 
         for (let i = 0; i < 2; i++) {
-          const iterPrompt = i === 0
-            ? imagenPrompt
-            : imagenPrompt + " Alternative composition, different angle or lighting direction.";
+          let imageBase64;
 
-          const imageBase64 = await generateImageWithGemini(iterPrompt, GOOGLE_API_KEY);
+          if (useGPT) {
+            // Wariant 2: lekko zmieniony prompt dla alternatywnego ujęcia
+            const variantPrompt = i === 0
+              ? gptPrompt
+              : gptPrompt.replace(
+                  "natural warm light",
+                  i % 2 === 1 ? "soft studio light, slightly different angle" : "golden hour light"
+                );
+
+            try {
+              imageBase64 = await generateWithProductReference(productPngBuf, variantPrompt, OPENAI_API_KEY);
+            } catch (err) {
+              // Fallback na Imagen jeśli GPT-image-1 zawiedzie
+              if (GOOGLE_API_KEY) {
+                send({ status: "generating", message: `GPT-image-1 error, używam Imagena... (${err.message.slice(0,50)})` });
+                imageBase64 = await generateWithImagen(imagenPrompt || gptPrompt, GOOGLE_API_KEY);
+              } else {
+                throw err;
+              }
+            }
+          } else {
+            // Imagen fallback
+            const iterPrompt = i === 0
+              ? imagenPrompt
+              : imagenPrompt + " Alternative angle, different lighting.";
+            imageBase64 = await generateWithImagen(iterPrompt, GOOGLE_API_KEY);
+          }
+
           const imageBuffer = Buffer.from(imageBase64, "base64");
-
           const formatResults = {};
+
           for (const formatKey of selectedFormats) {
             const fmt = FORMATS[formatKey];
             if (!fmt) continue;
+
             const composites = [];
 
-            // Tekst (opentype.js — no system fonts)
+            // ── Tekst (opentype.js — no system fonts) ─────────────
             if (textOnImage?.trim()) {
               const fontBuf = Buffer.from(embeddedFontB64, "base64");
               const _ot = _require("opentype.js");
@@ -239,29 +290,39 @@ export async function POST(req) {
               }
             }
 
-            // Logo
+            // ── Logo ───────────────────────────────────────────────
             if (logoBase64) {
               const logoBuf = Buffer.from(logoBase64, "base64");
               const maxLogoW = Math.floor(fmt.w * 0.22);
               const maxLogoH = Math.floor(fmt.h * 0.10);
-              const resizedLogo = await sharp(logoBuf).resize(maxLogoW, maxLogoH, { fit: "inside" }).toBuffer();
+              const resizedLogo = await sharp(logoBuf)
+                .resize(maxLogoW, maxLogoH, { fit: "inside" })
+                .toBuffer();
               const logoMeta = await sharp(resizedLogo).metadata();
               const pos = getLogoPosition(logoPosition, fmt.w, fmt.h, logoMeta.width, logoMeta.height);
               composites.push({ input: resizedLogo, top: pos.y, left: pos.x });
             }
 
+            // ── Złóż wszystko ──────────────────────────────────────
             const resized = sharp(imageBuffer).resize(fmt.w, fmt.h, { fit: "cover", position: "center" });
             const finalBuffer = composites.length > 0
               ? await resized.composite(composites).png().toBuffer()
               : await resized.png().toBuffer();
+
             formatResults[formatKey] = finalBuffer.toString("base64");
           }
 
           variants.push({ variant: i + 1, formats: formatResults });
           send({ status: "variant_done", variant: i + 1, data: variants[i] });
+          if (i === 0) send({ status: "generating", message: "Generuję wariant 2..." });
         }
 
-        send({ status: "done", variants, visualBrief: imagenScenePrompt });
+        send({
+          status: "done",
+          variants,
+          visualBrief: useGPT ? gptPrompt : imagenPrompt,
+          engine: useGPT ? "gpt-image-1" : "imagen-4-ultra",
+        });
 
       } catch (err) {
         send({ status: "error", message: err.message || "Blad generowania" });
