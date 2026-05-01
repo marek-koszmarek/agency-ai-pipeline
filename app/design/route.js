@@ -70,42 +70,36 @@ async function fetchImageAsBase64(url) {
   } catch { return null; }
 }
 
-// ── Claude writes visual brief ────────────────────────────────────
-async function generateVisualBrief(concept, postContent, brandUrl, websiteContent, imageUrls, userDirection, feedbackNotes, apiKey) {
+// ── Claude adds ONLY photography style — scene comes verbatim from user ──────
+// Split responsibility:
+//   - User's visualDirection → goes to Imagen literally, word for word, first
+//   - Claude → adds ONLY: lighting, lens, mood, color grading, photographer ref
+// This guarantees Imagen sees the exact scene first and cannot ignore it.
+async function generateStyleDetails(userDirection, websiteContent, concept, feedbackNotes, apiKey) {
   const client = new Anthropic({ apiKey });
 
-  const hasImages = imageUrls && imageUrls.length > 0;
-  const imageContext = hasImages
-    ? `\nPRODUCT IMAGES FOUND ON WEBSITE: ${imageUrls.join(", ")}\n(These are real product images from the brand's website)`
-    : "";
-
-  const contextParts = [
-    userDirection ? `USER SCENE (MUST be depicted LITERALLY and EXACTLY — this is the image): ${userDirection}` : "",
-    concept ? `Brand context (mood/atmosphere only, do NOT override the scene above):\n${concept.slice(0, 400)}` : "",
-    websiteContent ? `Website info:\n${websiteContent.slice(0, 500)}` : "",
-    imageContext,
-    feedbackNotes ? `Revision feedback:\n${feedbackNotes}` : "",
-  ].filter(Boolean).join("\n\n");
+  const contextHint = [
+    concept ? `Brand: ${concept.slice(0, 200)}` : "",
+    websiteContent ? `Site context: ${websiteContent.slice(0, 200)}` : "",
+    feedbackNotes ? `Revision notes: ${feedbackNotes}` : "",
+  ].filter(Boolean).join(" | ");
 
   const msg = await client.messages.create({
     model: "claude-sonnet-4-6",
-    max_tokens: 500,
+    max_tokens: 120,
     messages: [{
       role: "user",
-      content: `You are a senior art director writing an Imagen 4 Ultra image generation prompt.
+      content: `The image scene is already decided: "${userDirection}"
 
-CONTEXT:
-${contextParts}
+Your job: add ONLY photography style descriptors that suit this scene.
+Do NOT mention or rephrase the scene. Do NOT add subjects, objects or settings.
+Output exactly 20-35 words describing: camera/lens, lighting quality, mood, color grading, photographer/magazine reference.
 
-STRICT RULES:
-- Your prompt MUST open with the exact USER SCENE above — describe it literally, do not substitute or reinterpret it
-- Enrich ONLY with: lighting quality, photography style, lens, mood, color grading — never change the subject or setting
-- Reference real photographers/styles (e.g. "Annie Leibovitz lighting", "Kinfolk magazine editorial")
-- ABSOLUTELY NO text, logos, watermarks, labels, overlays, banners or dark bands in the image
-- 90-130 words maximum
-- No preamble — start directly with the scene
+${contextHint ? `Context for style inspiration: ${contextHint}` : ""}
 
-Write ONLY the prompt.`
+Example output: "Shot on 85mm f/1.4 lens, warm afternoon window light, Kinfolk magazine editorial style, muted warm tones, soft natural bokeh."
+
+Write ONLY the style descriptors, nothing else:`
     }]
   });
   return msg.content[0].text.trim();
@@ -156,35 +150,40 @@ export async function POST(req) {
           }
         }
 
-        // Step 2: Claude writes visual brief
-        send({ status: "thinking", message: "Roman pisze brief wizualny..." });
-        let visualPrompt;
-        try {
-          visualPrompt = await generateVisualBrief(
-            concept, postContent, brandUrl, websiteContent,
-            productImageUrls, visualDirection, feedbackNotes, ANTHROPIC_API_KEY
-          );
-        } catch {
-          // FIX Błąd 1: fallback also leads with the user's scene
-          visualPrompt = visualDirection
-            ? `${visualDirection}. Professional lifestyle advertising photograph. Natural light, premium quality.`
-            : `Professional lifestyle advertising photograph. Clean, modern aesthetic. Natural light, premium quality.`;
+        // Step 2: Claude adds ONLY style details — scene goes to Imagen verbatim
+        // FIX Błąd 1: Claude no longer describes the scene (it was reinterpreting it).
+        // visualDirection is passed to Imagen literally as the first tokens.
+        // Claude only contributes lighting/lens/mood so it cannot substitute the subject.
+        send({ status: "thinking", message: "Roman przygotowuje styl fotografii..." });
+        let styleDetails = "";
+        if (ANTHROPIC_API_KEY) {
+          try {
+            styleDetails = await generateStyleDetails(
+              visualDirection || "professional product lifestyle advertising photograph",
+              websiteContent, concept, feedbackNotes, ANTHROPIC_API_KEY
+            );
+          } catch {
+            styleDetails = "Professional advertising photography, natural window light, 85mm lens, clean composition.";
+          }
         }
+
+        // Brief shown in UI = scene + style
+        const visualPrompt = visualDirection
+          ? `${visualDirection}. ${styleDetails}`
+          : styleDetails || "Professional product lifestyle advertising photograph. Natural light, premium quality.";
         send({ status: "brief_ready", brief: visualPrompt });
 
         // Step 3: Build final Imagen prompt
-        // FIX Błąd 1: user direction goes first in finalPrompt, before Claude brief
-        // FIX Błąd 2: removed textBand — it was causing Imagen to paint a dark overlay band into the image
+        // FIX Błąd 1: scene is FIRST and literal — Imagen weights first tokens most
+        // FIX Błąd 2: no textBand — removed to prevent Imagen painting dark overlay
         const colorStr = brandColors.length ? ` Color palette: ${brandColors.join(", ")}.` : "";
         const logoCorner = logoPosition === "roman" ? "bottom-right" : logoPosition.replace("_", " ");
 
-        const scenePrefix = visualDirection
-          ? `SCENE: ${visualDirection}\n\n`
-          : "";
+        const sceneOpening = visualDirection ? `${visualDirection}. ` : "";
 
         const finalPrompt =
           `STRICTLY NO text, letters, numbers, words, overlays or dark bands anywhere in the image.\n\n` +
-          `${scenePrefix}${visualPrompt}${colorStr} ` +
+          `${sceneOpening}${styleDetails}${colorStr} ` +
           `Keep ${logoCorner} corner clear for logo. No watermarks.`;
 
         send({ status: "generating", message: "Imagen 4 Ultra generuje..." });
