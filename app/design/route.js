@@ -80,13 +80,13 @@ async function generateVisualBrief(concept, postContent, brandUrl, websiteConten
     : "";
 
   // User's visual direction is TOP PRIORITY - must dominate the image
+  // User direction is NON-NEGOTIABLE - must be the literal scene
   const contextParts = [
-    userDirection ? `CRITICAL USER DIRECTION (this must be the main scene):\n${userDirection}` : "",
-    concept ? `BRAND/PRODUCT INFO:\n${concept.slice(0, 600)}` : "",
-    websiteContent ? `BRAND CONTEXT FROM WEBSITE:\n${websiteContent.slice(0, 800)}` : "",
+    userDirection ? `MANDATORY SCENE (you MUST depict this EXACTLY): ${userDirection}` : "",
+    concept ? `Brand context (for atmosphere/mood only):\n${concept.slice(0, 400)}` : "",
+    websiteContent ? `Website info:\n${websiteContent.slice(0, 500)}` : "",
     imageContext,
-    postContent ? `POST THEME:\n${postContent.slice(0, 200)}` : "",
-    feedbackNotes ? `REVISION FEEDBACK:\n${feedbackNotes}` : "",
+    feedbackNotes ? `Revision feedback:\n${feedbackNotes}` : "",
   ].filter(Boolean).join("\n\n");
 
   const msg = await client.messages.create({
@@ -100,12 +100,13 @@ CONTEXT:
 ${contextParts}
 
 RULES:
-- IF the user gave a CRITICAL USER DIRECTION above — that scene MUST be the image. Don't deviate.
-- Be ultra-specific: exact lighting, composition, colors, photography style, mood, materials, time of day
-- Reference real photographers/styles (e.g. "Kinfolk magazine", "shot by Annie Leibovitz", "Vogue editorial")
-- The product from the brand context should appear naturally in the scene if direction mentions it
-- STRICTLY NO text, logos, watermarks, or labels visible anywhere in the image
+- The MANDATORY SCENE above is your PRIMARY directive - depict it literally and exactly
+- Describe ONLY what was asked - do not invent unrelated elements
+- Be ultra-specific: lighting, composition, colors, photography style, mood, time of day
+- Reference real photographers/styles (e.g. "Annie Leibovitz", "Vogue editorial", "Kinfolk magazine")
+- STRICTLY NO text, logos, watermarks, labels anywhere in the image
 - 90-130 words maximum
+- Start your prompt with the exact scene described in MANDATORY SCENE
 
 Write ONLY the prompt, no explanation. Start directly with the scene.`
     }]
@@ -243,14 +244,7 @@ export async function POST(req) {
                 lineImgs.push({ img, w: meta.width, h: meta.height });
               }
 
-              // Background band
-              const totalH = lineImgs.reduce((s, l) => s + l.h + 8, 0) + 24;
-              const bgBuf = Buffer.alloc(W * totalH * 4);
-              for (let p = 0; p < W * totalH; p++) {
-                bgBuf[p*4] = 0; bgBuf[p*4+1] = 0; bgBuf[p*4+2] = 0; bgBuf[p*4+3] = 110;
-              }
-              composites.push({ input: bgBuf, raw: { width: W, height: totalH, channels: 4 }, top: textY, left: 0 });
-
+              // Subtle semi-transparent band under text
               // Place text lines centered
               let curY = textY + 12;
               for (const { img, w: lw, h: lh } of lineImgs) {
