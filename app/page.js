@@ -199,7 +199,7 @@ function DesignVariant({ variant, variantNum, selectedFormats }) {
 export default function Home() {
 
   // ── View state ──────────────────────────────────────────────────
-  const [view, setView] = useState("config"); // config | running | clarification | results | design_results
+  const [view, setView] = useState("config");
 
   // ── Mode & options ───────────────────────────────────────────────
   const [mode, setMode]                     = useState("concept");
@@ -263,6 +263,9 @@ export default function Home() {
   const [newClientGoal, setNewClientGoal]     = useState("awareness");
   const [newClientUrl, setNewClientUrl]       = useState("");
 
+  // ── ZMIANA 1: nowy state dla zdjęcia produktu (nowy klient) ──────
+  const [newClientProductFile, setNewClientProductFile] = useState([]);
+
   const setAgent = (id, s) => setAgentStatus(p => ({ ...p, [id]: s }));
   const setResult = (id, c) => setResults(p => ({ ...p, [id]: c }));
 
@@ -282,6 +285,8 @@ export default function Home() {
     setDesignVariants([]); setDesignGenerating(false); setDesignError(""); setFeedbackText(""); setDesignIteration(0);
     setDesignMode("new_client"); setSelectedClient("m1"); setProductImageFile([]); setClientLogoFile([]);
     setNewClientBrand(""); setNewClientProduct(""); setNewClientGoal("awareness"); setNewClientUrl("");
+    // ZMIANA 2: reset nowego pola
+    setNewClientProductFile([]);
   };
 
   const getFiles = () => {
@@ -412,26 +417,24 @@ export default function Home() {
     }
   };
 
-  // ── Design (Nowy klient — Imagen) ─────────────────────────────────
+  // ── Design (Nowy klient — GPT-image-1 / Imagen) ───────────────────
   const runDesign = async (iteration = 0, feedback = "") => {
     setDesignGenerating(true); setDesignError(""); setDesignVariants([]);
     try {
       const baseContent = mode === "design"
         ? (briefText || "")
         : (results.creative || results["social_content"] || results.researcher || briefText || "");
-      const concept = visualDirection
-        ? `VISUAL DIRECTION FROM USER:\n${visualDirection}\n\nCREATIVE CONCEPT:\n${baseContent}`
-        : baseContent;
       const colors = brandColors.split(/[,\s]+/).filter(Boolean);
       const res = await fetch("/design", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          brandUrl: newClientUrl || brandUrl,
+          // ZMIANA 4a: brandUrl bez || brandUrl (brandUrl nie istnieje jako state)
+          brandUrl: newClientUrl,
           concept: [
             newClientBrand ? `Marka: ${newClientBrand}` : "",
             newClientProduct ? `Produkt: ${newClientProduct}` : "",
             newClientGoal ? `Cel: ${newClientGoal}` : "",
-            briefText || "",
+            baseContent || "",
           ].filter(Boolean).join("\n"),
           postContent: postForDesign,
           brandColors: colors,
@@ -441,7 +444,10 @@ export default function Home() {
           logoPosition,
           feedbackIteration: iteration,
           feedbackNotes: feedback,
+          visualDirection,
           selectedFormats,
+          // ZMIANA 4b: przekazuje zdjęcie produktu do backendu
+          productImageBase64: newClientProductFile[0]?.base64 || null,
         }),
       });
       if (!res.ok) throw new Error(`Błąd API (${res.status})`);
@@ -459,7 +465,7 @@ export default function Home() {
           let ev;
           try { ev = JSON.parse(line); } catch (_) { continue; }
           if (ev.status === "variant_done") setDesignVariants(p => [...p, ev.data]);
-          if (ev.status === "error") throw new Error(ev.message || "Błąd Gemini API");
+          if (ev.status === "error") throw new Error(ev.message || "Błąd generowania");
         }
       }
       setDesignIteration(iteration + 1);
@@ -531,7 +537,6 @@ export default function Home() {
   ].filter(Boolean);
 
   const currentTab = activeResultTab || allTabs[0]?.key;
-
   const currentMode = MODES.find(m => m.key === mode);
   const runningAgents = STEPS[mode] || [];
 
@@ -662,7 +667,7 @@ export default function Home() {
                   </div>
                 </div>
 
-                {/* ── NOWY KLIENT — pełny flow z Imagen ── */}
+                {/* ── NOWY KLIENT ── */}
                 {designMode === "new_client" && (
                   <>
                     <div className="section">
@@ -695,10 +700,10 @@ export default function Home() {
                           </div>
                         </div>
                         <div>
-                          <div className="field-label">URL strony klienta (Roman pobierze zdjęcia produktów)</div>
+                          <div className="field-label">URL strony klienta (opcjonalnie)</div>
                           <input className="field-input" value={newClientUrl}
                             onChange={e => setNewClientUrl(e.target.value)}
-                            placeholder="https://nazwafirmy.pl — Roman pobierze zdjęcia produktów ze strony" />
+                            placeholder="https://nazwafirmy.pl" />
                         </div>
                       </div>
                     </div>
@@ -712,7 +717,7 @@ export default function Home() {
                         <div className="field-label">Opisz jak ma wyglądać grafika</div>
                         <textarea className="field-textarea" value={visualDirection}
                           onChange={e => setVisualDirection(e.target.value)} style={{ minHeight: 70 }}
-                          placeholder="np. Minimalistyczne zdjecie produktu / Ciemne tlo ze zlotem / Lifestyle kobieta z kawa" />
+                          placeholder="np. Kobieta odpoczywająca po pracy z kubkiem termicznym / Minimalistyczne tło ze złotem" />
                       </div>
                     </div>
                     <div className="section">
@@ -721,6 +726,25 @@ export default function Home() {
                         <div className="section-title">Assety marki</div>
                       </div>
                       <div className="section-body" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+
+                        {/* ZMIANA 3: pole zdjęcia produktu — kluczowe dla trafności grafiki */}
+                        <div>
+                          <div className="field-label">
+                            📦 Zdjęcie produktu PNG bez tła
+                            <span style={{ marginLeft: 8, fontSize: 11, color: "var(--violet, #7C3AED)", fontWeight: 600 }}>
+                              ← kluczowe dla trafności grafiki
+                            </span>
+                          </div>
+                          <FileOrPaste
+                            files={newClientProductFile}
+                            onFiles={setNewClientProductFile}
+                            accept=".png,.jpg,.jpeg,.webp"
+                            single
+                            text={null}
+                            onText={null}
+                            textPlaceholder="(tylko plik)" />
+                        </div>
+
                         <div>
                           <div className="field-label">Logo (PNG z przezroczystością)</div>
                           <FileOrPaste files={logoFile} onFiles={setLogoFile} accept={".png,.jpg,.jpeg,.webp"} single
@@ -820,14 +844,12 @@ export default function Home() {
                         </div>
                       </div>
 
-                      {/* Logo override — opcjonalne */}
                       <div>
                         <div className="field-label">Logo klienta (opcjonalnie — nadpisuje szablon)</div>
                         <FileOrPaste files={clientLogoFile} onFiles={setClientLogoFile}
                           accept=".png,.jpg,.jpeg,.webp" single text={null} onText={null}
                           textPlaceholder="(tylko plik)" />
                       </div>
-
                       <div>
                         <div className="field-label">Zdjęcie produktu</div>
                         <FileOrPaste
@@ -983,7 +1005,6 @@ export default function Home() {
                 <button className="btn-action primary" onClick={downloadWord}>⬇ Word (.docx)</button>
               </div>
             </div>
-
             <div className="results-tabs">
               {allTabs.map(t => (
                 <button key={t.key} className={`result-tab${currentTab===t.key?" active":""}`}
@@ -993,7 +1014,6 @@ export default function Home() {
                 </button>
               ))}
             </div>
-
             <div className="result-content">
               {results[currentTab]
                 ? <div className="result-text">{results[currentTab]}</div>
@@ -1002,7 +1022,6 @@ export default function Home() {
                     <div>Generowanie...</div>
                   </div>}
             </div>
-
             {view === "results" && (
               <div style={{ padding: "24px 40px", borderTop: "1px solid var(--border)", display: "flex", flexWrap: "wrap", gap: 12 }}>
                 {mode !== "ads" && mode !== "design" && wantsAnalyst === null && (
@@ -1061,7 +1080,7 @@ export default function Home() {
                   <div>
                     {designMode === "existing_client"
                       ? "Renderuję grafiki według szablonu klienta..."
-                      : "Gemini generuje wizualizacje..."}
+                      : "Generuję wizualizacje..."}
                   </div>
                   <div style={{fontSize:12,color:"var(--text-dim)"}}>To może zająć 15–60 sekund</div>
                 </div>
