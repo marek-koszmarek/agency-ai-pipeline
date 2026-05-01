@@ -8,8 +8,40 @@ export const maxDuration = 120;
 
 function sse(obj) { return `data: ${JSON.stringify(obj)}\n\n`; }
 
-// GPT-image-1 /generations z opisem produktu
-async function generateWithGPT(prompt, apiKey) {
+// GPT-image-1 /edits — produkt jako IMAGE INPUT (nie opis słowny)
+// Kluczowa zmiana: /generations (text-only) → /edits (obraz produktu jako referencja)
+// GPT widzi faktyczny produkt i buduje scenę wokół niego zamiast halucynować własny
+async function generateWithGPT(prompt, apiKey, productPngBase64 = null) {
+  if (productPngBase64) {
+    // /edits: produkt jako input image — GPT zachowuje go i generuje scenę wokół
+    const productBuffer = Buffer.from(productPngBase64, "base64");
+    const productBlob = new Blob([productBuffer], { type: "image/png" });
+
+    const formData = new FormData();
+    formData.append("image", productBlob, "product.png");
+    formData.append("model", "gpt-image-1");
+    formData.append("prompt", prompt);
+    formData.append("size", "1024x1536");
+    formData.append("quality", "medium");
+    formData.append("n", "1");
+    formData.append("output_format", "png");
+
+    const res = await fetch("https://api.openai.com/v1/images/edits", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}` },
+      // BRAK Content-Type — FormData ustawia go automatycznie z boundary
+      body: formData,
+      signal: AbortSignal.timeout(90000),
+    });
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error(`GPT-image-1 edits error ${res.status}: ${err}`);
+    }
+    const data = await res.json();
+    return data.data[0].b64_json;
+  }
+
+  // Fallback: /generations gdy brak zdjęcia produktu (np. tylko brand bez product upload)
   const res = await fetch("https://api.openai.com/v1/images/generations", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
@@ -37,8 +69,7 @@ async function generateWithImagen(prompt, apiKey) {
   return generateImageWithGemini(prompt, apiKey);
 }
 
-// Claude Vision: opisuje produkt KOLOR JAKO PIERWSZE — to klucz do trafności
-// GPT-image-1 waży pierwsze słowa promptu najsilniej
+// Claude Vision: opisuje produkt KOLOR JAKO PIERWSZE — wzmocnienie w prompcie /edits
 async function describeProduct(productBase64, apiKey) {
   const client = new Anthropic({ apiKey });
   const msg = await client.messages.create({
@@ -116,11 +147,6 @@ async function scrapeBrandText(url) {
 }
 
 // ── TYPOGRAPHY ENGINE ─────────────────────────────────────────────
-// Zasady z badań nad reklamą:
-// - Krótki tekst (1-3 słowa): maksymalna wielkość, wypełnia 78% szerokości — IMPACT
-// - Średni (4-6 słów): dwa poziomy — pierwsze słowa 100%, reszta 60% (hierarchy)
-// - Długi (7+): podział na dwie linie, pierwsza 100%, druga 70%
-// - Typografia reklamowa: kontrast wielkości = hierarchy = eye-path
 async function renderCreativeText(textOnImage, logoPosition, fmt, sharpLib, fontB64) {
   const _ot = _require("opentype.js");
   const fontBuf = Buffer.from(fontB64, "base64");
@@ -133,7 +159,6 @@ async function renderCreativeText(textOnImage, logoPosition, fmt, sharpLib, font
   const isLogoTop = logoPosition && logoPosition.includes("top");
   const composites = [];
 
-  // Pomocnicza: renderuj jedną linię tekstu jako PNG buffer
   async function renderLine(text, fontSize, color = "white") {
     const path = font.getPath(text, 0, fontSize, fontSize);
     const b = path.getBoundingBox();
@@ -147,7 +172,6 @@ async function renderCreativeText(textOnImage, logoPosition, fmt, sharpLib, font
     return { img, w: meta.width, h: meta.height };
   }
 
-  // Auto-scale: znajdź fontSize by tekst wypełniał TARGET_WIDTH
   function calcFontSizeForWidth(text, targetWidth) {
     let size = 40;
     for (let s = 200; s >= 30; s -= 2) {
@@ -159,8 +183,6 @@ async function renderCreativeText(textOnImage, logoPosition, fmt, sharpLib, font
   }
 
   if (wordCount <= 3) {
-    // TRYB: IMPACT — 1-3 słowa wypełniają 78% szerokości
-    // Najlepsze praktyki: Nike, Apple — jedno słowo, maksymalna siła
     const targetW = Math.floor(W * 0.78);
     const fontSize = calcFontSizeForWidth(words.join(" "), targetW);
     const line = await renderLine(words.join(" "), fontSize);
@@ -172,8 +194,6 @@ async function renderCreativeText(textOnImage, logoPosition, fmt, sharpLib, font
     });
 
   } else if (wordCount <= 6) {
-    // TRYB: HIERARCHY — pierwsze 1-2 słowa duże (hook), reszta mniejsza (body)
-    // Zasada: headline 100%, subline 55-60% — prowadzi wzrok
     const hookWords = words.slice(0, Math.ceil(wordCount / 2));
     const bodyWords = words.slice(Math.ceil(wordCount / 2));
     const hookText = hookWords.join(" ");
@@ -203,8 +223,6 @@ async function renderCreativeText(textOnImage, logoPosition, fmt, sharpLib, font
     });
 
   } else {
-    // TRYB: SPLIT — długi tekst, dwie linie z kontrastem wielkości
-    // Pierwsza linia 100%, druga 72% — scale contrast = visual interest
     const mid = Math.ceil(wordCount / 2);
     const line1Text = words.slice(0, mid).join(" ");
     const line2Text = words.slice(mid).join(" ");
@@ -259,7 +277,52 @@ export async function POST(req) {
       try {
         const sharp = (await import("sharp")).default;
 
-        // KROK 1: Opisz produkt — KOLOR JAKO PIERWSZE
+        // KROK 0: Przygotuj PNG produktu dla /edits endpoint
+        // /edits wymaga PNG — konwertujemy niezależnie od źródłowego formatu (JPEG/PNG/WebP)
+        // Usuwamy też białe tło by GPT wiedział gdzie kończy się produkt
+        let productPngBase64 = null;
+        if (productImageBase64 && OPENAI_API_KEY) {
+          send({ status: "scraping", message: "Przygotowuję produkt do generowania..." });
+          try {
+            // Konwertuj do PNG + usuń białe tło (GPT traktuje transparentne piksele jako "tu wygeneruj scenę")
+            const rawBuf = Buffer.from(productImageBase64, "base64");
+            const { data: pd, info: pi } = await sharp(rawBuf)
+              .ensureAlpha()
+              .raw()
+              .toBuffer({ resolveWithObject: true });
+
+            const pa = new Uint8Array(pd);
+            for (let px = 0; px < pa.length; px += 4) {
+              const r = pa[px], g = pa[px+1], b = pa[px+2];
+              // Białe i prawie-białe piksele → transparentne
+              if (r > 230 && g > 230 && b > 230) {
+                pa[px+3] = 0;
+              } else if (r > 210 && g > 210 && b > 210) {
+                // Miękkie wygaszenie krawędzi
+                pa[px+3] = Math.floor(((255 - Math.min(r, g, b)) / 45) * 255);
+              }
+            }
+
+            const pngBuf = await sharp(Buffer.from(pa.buffer), {
+              raw: { width: pi.width, height: pi.height, channels: 4 },
+            }).png().toBuffer();
+
+            productPngBase64 = pngBuf.toString("base64");
+            send({ status: "scraping", message: "✅ Produkt gotowy (tło usunięte, PNG)" });
+          } catch (e) {
+            // Fallback: użyj oryginału bez usuwania tła
+            send({ status: "scraping", message: `PNG konwersja: fallback do oryginału (${e.message.slice(0,40)})` });
+            try {
+              const pngFallback = await sharp(Buffer.from(productImageBase64, "base64")).png().toBuffer();
+              productPngBase64 = pngFallback.toString("base64");
+            } catch {
+              productPngBase64 = null;
+            }
+          }
+        }
+
+        // KROK 1: Opisz produkt (Claude Vision) — kolor jako pierwsze
+        // Przy /edits Vision jest backup-wzmocnieniem, nie głównym źródłem wizualnym
         let productDescription = "";
         if (productImageBase64 && ANTHROPIC_API_KEY) {
           send({ status: "scraping", message: "Analizuję kolor i kształt produktu..." });
@@ -269,9 +332,6 @@ export async function POST(req) {
           } catch {
             productDescription = "";
           }
-        } else if (productImageBase64) {
-          // Brak Anthropic API — podstawowy opis
-          productDescription = "thermal bottle product";
         }
 
         if (!productImageBase64) {
@@ -310,36 +370,61 @@ export async function POST(req) {
         }
 
         // KROK 3: Buduj prompt
-        // KLUCZOWE: kolor produktu jest PIERWSZYM zdaniem — GPT waży start promptu najsilniej
         const colorStr = brandColors.length ? ` Color palette hint: ${brandColors.join(", ")}.` : "";
         const logoCorner = logoPosition === "roman" ? "bottom-right" : logoPosition.replace("_", " ");
-        const useGPT = !!(productDescription && productDescription !== "thermal bottle product" && OPENAI_API_KEY);
+
+        // useGPT = mamy OpenAI key. Gdy jest też produkt → /edits, gdy nie ma → /generations
+        const useGPT = !!OPENAI_API_KEY;
 
         let gptPrompt, imagenPrompt;
 
         if (useGPT) {
-          // Wyciągnij kolor z opisu (pierwsze słowa) dla podkreślenia
-          const descWords = productDescription.split(" ");
-          const colorPhrase = descWords.slice(0, 3).join(" ");
+          // Wyciągnij kolor z opisu Claude Vision (wzmocnienie tekstowe oprócz obrazu)
+          const descWords = (productDescription || "").split(" ");
+          const colorPhrase = descWords.slice(0, 3).join(" ") || "the product";
 
-          gptPrompt =
-            // KOLOR PIERWSZYM ZDANIEM — najsilniejszy sygnał dla GPT
-            `PRODUCT COLOR AND APPEARANCE — NON-NEGOTIABLE: ${productDescription}. ` +
-            `The bottle color is ${colorPhrase} — this MUST be exact in the final image. ` +
-            // Scena PO opisie produktu
-            `SCENE: ${sceneEnglish ? sceneEnglish + "." : "Professional lifestyle photograph."} ` +
-            // Anatomia — fix trzy ręce
-            `The person has realistic human anatomy with exactly two hands and two arms — no extra limbs. ` +
-            `The person holds the ${colorPhrase} bottle described above — identical color and shape. ` +
-            // Styl fotograficzny
-            `Photorealistic advertising photography, 85mm f/1.4 lens, natural warm window light, ` +
-            `Kinfolk magazine editorial style, muted warm tones, cinematic composition. ` +
-            `${colorStr} Keep ${logoCorner} corner clear for logo placement. ` +
-            `ABSOLUTELY NO text, letters, logos, watermarks, or text overlays in the generated image. ` +
-            `Portrait orientation.`;
+          if (productPngBase64) {
+            // TRYB EDITS: produkt jest dostarczony jako obraz — GPT go WIDZI
+            // Prompt mówi: zachowaj dokładnie ten produkt, zbuduj scenę wokół niego
+            gptPrompt =
+              // Instrukcja krytyczna: użyj produktu z obrazu 1:1
+              `You are provided with the EXACT product image. ` +
+              `USE THIS EXACT PRODUCT — preserve every visual detail: precise color, shape, finish, cap, base ring, logo. ` +
+              `DO NOT substitute, change, or hallucinate a different product. ` +
+              // Kolor jako tekstowe wzmocnienie
+              (productDescription ? `The product is: ${productDescription}. ` : "") +
+              // Scena
+              `SCENE: ${sceneEnglish ? sceneEnglish + "." : "Professional lifestyle photograph."} ` +
+              `The person holds the exact product from the provided image — identical in every visual detail. ` +
+              // Anatomia
+              `The person has realistic human anatomy with exactly two hands and two arms — no extra limbs. ` +
+              // Styl
+              `Photorealistic advertising photography, 85mm f/1.4 lens, natural warm window light, ` +
+              `Kinfolk magazine editorial style, muted warm tones, cinematic composition. ` +
+              `${colorStr} Keep ${logoCorner} corner clear for logo placement. ` +
+              `ABSOLUTELY NO text, letters, logos, watermarks, or text overlays in the generated image. ` +
+              `Portrait orientation.`;
 
-          send({ status: "brief_ready", brief: `[GPT] ${colorPhrase} bottle | ${sceneEnglish}` });
-          send({ status: "generating", message: "GPT-image-1 generuje scenę z dokładnym kolorem produktu..." });
+            send({ status: "brief_ready", brief: `[GPT /edits] Produkt jako obraz → ${sceneEnglish}` });
+            send({ status: "generating", message: "GPT-image-1 generuje scenę wokół Twojego produktu (/edits)..." });
+
+          } else {
+            // Brak PNG produktu — fallback do /generations z opisem słownym
+            gptPrompt =
+              `PRODUCT COLOR AND APPEARANCE — NON-NEGOTIABLE: ${productDescription}. ` +
+              `The bottle color is ${colorPhrase} — this MUST be exact. ` +
+              `SCENE: ${sceneEnglish ? sceneEnglish + "." : "Professional lifestyle photograph."} ` +
+              `The person has realistic human anatomy with exactly two hands and two arms — no extra limbs. ` +
+              `The person holds the ${colorPhrase} bottle — identical color and shape. ` +
+              `Photorealistic advertising photography, 85mm f/1.4 lens, natural warm window light, ` +
+              `Kinfolk magazine editorial style, muted warm tones, cinematic composition. ` +
+              `${colorStr} Keep ${logoCorner} corner clear for logo placement. ` +
+              `ABSOLUTELY NO text, letters, logos, watermarks, or text overlays in the generated image. ` +
+              `Portrait orientation.`;
+
+            send({ status: "brief_ready", brief: `[GPT /generations] ${colorPhrase} | ${sceneEnglish}` });
+            send({ status: "generating", message: "GPT-image-1 generuje (brak PNG produktu, tryb opisowy)..." });
+          }
 
         } else {
           const productHint = productDescription ? `The person holds: ${productDescription}.` : "";
@@ -364,9 +449,10 @@ export async function POST(req) {
             const variantPrompt = i === 0 ? gptPrompt
               : gptPrompt
                   .replace("natural warm window light", "soft diffused side light")
-                  .replace("Portrait orientation", "Slightly different composition, Portrait orientation");
+                  .replace("Portrait orientation", "Slightly different angle/composition, Portrait orientation");
             try {
-              imageBase64 = await generateWithGPT(variantPrompt, OPENAI_API_KEY);
+              // Przekazujemy productPngBase64 — gdy istnieje, generateWithGPT użyje /edits
+              imageBase64 = await generateWithGPT(variantPrompt, OPENAI_API_KEY, productPngBase64);
             } catch (err) {
               if (GOOGLE_API_KEY) {
                 send({ status: "generating", message: `GPT error, Imagen fallback... (${err.message.slice(0,40)})` });
@@ -387,15 +473,12 @@ export async function POST(req) {
             const composites = [];
 
             // ── Kreatywna typografia ──────────────────────────────
-            // Hierarchy, scale contrast, auto-sizing — zasady reklamy
             if (textOnImage?.trim()) {
               const textComps = await renderCreativeText(textOnImage, logoPosition, fmt, sharp, POPPINS_BOLD_B64);
               composites.push(...textComps);
             }
 
             // ── Logo — usuń białe tło ─────────────────────────────
-            // FIX BIAŁA APLA: logo przesyłane jako PNG (page.js prepFilePreservingFormat)
-            // Ale na wszelki wypadek: usuwamy białe piksele też po stronie backendu
             if (logoBase64) {
               const logoBuf = Buffer.from(logoBase64, "base64");
               const maxLogoW = Math.floor(fmt.w * 0.22);
@@ -406,7 +489,6 @@ export async function POST(req) {
                 .png()
                 .toBuffer();
 
-              // Usuń białe tło — działa nawet gdy logo przyszło jako JPEG
               const { data: ld, info: li } = await sharp(resizedLogo)
                 .ensureAlpha().raw().toBuffer({ resolveWithObject: true });
               const lp = new Uint8Array(ld);
@@ -427,9 +509,7 @@ export async function POST(req) {
               composites.push({ input: resizedLogo, top: pos.y, left: pos.x });
             }
 
-            // ── Złóż na czarnym canvas — BRAK BIAŁEJ APLI ────────
-            // FIX CZARNA/BIAŁA APLA: Sharp domyślnie wypełnia puste piksele białym.
-            // Czarny canvas jako baza eliminuje to całkowicie.
+            // ── Złóż na czarnym canvas ────────────────────────────
             const resizedPhoto = await sharp(imageBuffer)
               .resize(fmt.w, fmt.h, { fit: "cover", position: "center" })
               .png().toBuffer();
@@ -450,7 +530,12 @@ export async function POST(req) {
           if (i === 0) send({ status: "generating", message: "Generuję wariant 2..." });
         }
 
-        send({ status: "done", variants, visualBrief: useGPT ? gptPrompt : imagenPrompt, engine: useGPT ? "gpt-image-1" : "imagen-4" });
+        send({
+          status: "done",
+          variants,
+          visualBrief: useGPT ? gptPrompt : imagenPrompt,
+          engine: useGPT ? (productPngBase64 ? "gpt-image-1/edits" : "gpt-image-1/generations") : "imagen-4",
+        });
 
       } catch (err) {
         send({ status: "error", message: err.message || "Blad generowania" });
