@@ -101,12 +101,22 @@ async function prepFiles(fl) {
   }));
 }
 
+// FIX BIAŁA APLA: Logo i produkt PNG NIGDY nie kompresujemy do JPEG.
+// compressImage() konwertuje PNG→JPEG → traci kanał alpha → białe tło na grafice.
+// Ta funkcja zachowuje oryginalny format (PNG z transparentnością).
+async function prepFilePreservingFormat(fl) {
+  return Promise.all(Array.from(fl).map(async (f) => {
+    const base64 = await readAsBase64(f);
+    return { name: f.name, mimeType: f.type, base64 };
+  }));
+}
+
 // ── COMPONENTS ────────────────────────────────────────────────────
-function FileOrPaste({ files, onFiles, text, onText, label, hint, accept = ACCEPTED, single = false, textPlaceholder }) {
+function FileOrPaste({ files, onFiles, text, onText, label, hint, accept = ACCEPTED, single = false, textPlaceholder, prepFn = prepFiles }) {
   const [drag, setDrag] = useState(false);
   const ref = useRef();
   const add = useCallback(async (fl) => {
-    const prep = await prepFiles(fl);
+    const prep = await prepFn(fl);
     if (single) { onFiles(prep.slice(0, 1)); return; }
     onFiles(p => {
       const n = new Set((p || []).map(f => f.name));
@@ -732,7 +742,7 @@ export default function Home() {
                           <div className="field-label">
                             📦 Zdjęcie produktu PNG bez tła
                             <span style={{ marginLeft: 8, fontSize: 11, color: "var(--violet, #7C3AED)", fontWeight: 600 }}>
-                              ← kluczowe dla trafności grafiki
+                              ← kluczowe dla trafności koloru i kształtu
                             </span>
                           </div>
                           <FileOrPaste
@@ -742,13 +752,15 @@ export default function Home() {
                             single
                             text={null}
                             onText={null}
-                            textPlaceholder="(tylko plik)" />
+                            textPlaceholder="(tylko plik)"
+                            prepFn={prepFilePreservingFormat} />
                         </div>
 
                         <div>
                           <div className="field-label">Logo (PNG z przezroczystością)</div>
                           <FileOrPaste files={logoFile} onFiles={setLogoFile} accept={".png,.jpg,.jpeg,.webp"} single
-                            text={null} onText={null} textPlaceholder="(tylko plik)" />
+                            text={null} onText={null} textPlaceholder="(tylko plik)"
+                            prepFn={prepFilePreservingFormat} />
                         </div>
                         <div className="grid-2">
                           <div>
