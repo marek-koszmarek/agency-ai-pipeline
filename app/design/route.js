@@ -8,146 +8,97 @@ export const maxDuration = 120;
 
 function sse(obj) { return `data: ${JSON.stringify(obj)}\n\n`; }
 
-// Scrape — fallback gdy brak uploadu produktu
-async function scrapeBrandWebsite(url) {
-  if (!url || !url.startsWith("http")) return { text: "", imageUrls: [] };
+// Scrape — tylko tekst o marce, bez pobierania obrazow
+async function scrapeBrandText(url) {
+  if (!url || !url.startsWith("http")) return "";
   try {
     const res = await fetch(url, {
       headers: { "User-Agent": "Mozilla/5.0 (compatible; RomanAI/1.0)" },
-      signal: AbortSignal.timeout(8000),
+      signal: AbortSignal.timeout(6000),
     });
-    if (!res.ok) return { text: "", imageUrls: [] };
+    if (!res.ok) return "";
     const html = await res.text();
-    const baseUrl = new URL(url);
-    const BAD = [
-      "flag","lang","language","country","locale",
-      "facebook","instagram","twitter","youtube","social",
-      "avatar","author","team","banner","hero","header","footer",
-      "icon","logo","sprite","placeholder","pixel","tracking",
-      "arrow","chevron","close","menu","search","cart",
-      "_pl.","_en.","_de.","-pl.","-en.","/flags/","/lang/",
-      "1x1","spacer","blank",
-    ];
-    const imgMatches = [...html.matchAll(/<img[^>]+src=["']([^"']+)["'][^>]*>/gi)];
-    const imageUrls = imgMatches
-      .map(m => m[1])
-      .filter(src => {
-        const lower = src.toLowerCase();
-        if (BAD.some(p => lower.includes(p))) return false;
-        return lower.includes(".jpg") || lower.includes(".jpeg") ||
-               lower.includes(".png") || lower.includes(".webp");
-      })
-      .map(src => {
-        try { return src.startsWith("http") ? src : new URL(src, baseUrl.origin).href; }
-        catch { return null; }
-      })
-      .filter(Boolean)
-      .slice(0, 8);
-    const cleaned = html
+    return html
       .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
       .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
       .replace(/<[^>]+>/g, " ")
       .replace(/\s+/g, " ").trim().slice(0, 2000);
-    return { text: cleaned, imageUrls };
-  } catch { return { text: "", imageUrls: [] }; }
+  } catch { return ""; }
 }
 
-// Pobierz produkt — HEAD check rozmiar + wymiary minimum 150x150
-async function downloadProductImage(imageUrls, sharpLib) {
-  for (const url of imageUrls.slice(0, 6)) {
-    try {
-      const head = await fetch(url, {
-        method: "HEAD",
-        headers: { "User-Agent": "Mozilla/5.0 (compatible; RomanAI/1.0)" },
-        signal: AbortSignal.timeout(3000),
-      });
-      if (!head.ok) continue;
-      const cl = parseInt(head.headers.get("content-length") || "0");
-      if (cl > 0 && cl < 5000) continue;
-      const res = await fetch(url, {
-        headers: { "User-Agent": "Mozilla/5.0 (compatible; RomanAI/1.0)" },
-        signal: AbortSignal.timeout(6000),
-      });
-      if (!res.ok) continue;
-      const buf = Buffer.from(await res.arrayBuffer());
-      const meta = await sharpLib(buf).metadata();
-      if ((meta.width || 0) < 150 || (meta.height || 0) < 150) continue;
-      return await sharpLib(buf).png().toBuffer();
-    } catch { continue; }
-  }
-  return null;
-}
-
-// Usun biale tlo z obrazu produktu — raw pixel processing
-// Dzialanie: piksele blizsze bialemu (>235) staja sie transparentne,
-// piksele posrednie (200-235) staja sie polprzezroczyste (antyaliasing krawedzi).
-// Wynik: produkt wyglada jak wyciety z tla, bez bialego prostokata.
-async function removeWhiteBackground(pngBuf, sharpLib) {
-  const { data, info } = await sharpLib(pngBuf)
-    .ensureAlpha()
-    .raw()
-    .toBuffer({ resolveWithObject: true });
-
-  const pixels = new Uint8Array(data);
-  for (let i = 0; i < pixels.length; i += 4) {
-    const r = pixels[i], g = pixels[i + 1], b = pixels[i + 2];
-    if (r > 235 && g > 235 && b > 235) {
-      pixels[i + 3] = 0;
-    } else if (r > 200 && g > 200 && b > 200) {
-      const brightness = Math.min(r, g, b);
-      pixels[i + 3] = Math.floor(((255 - brightness) / 55) * 255);
-    }
-  }
-
-  return sharpLib(Buffer.from(pixels.buffer), {
-    raw: { width: info.width, height: info.height, channels: 4 },
-  }).png().toBuffer();
-}
-
-// Claude dodaje TYLKO styl fotografii — scena pochodzi dosłownie od usera
-// Wywoluj TYLKO gdy visualDirection jest ustawiony
-// Gdy brak visualDirection — uzywaj hardcoded neutral prompt (unikamy halucynacji)
-async function generateStyleDetails(scene, apiKey) {
+// KROK 1: Claude Vision opisuje produkt ze zdjecia
+// Zwraca precyzyjny opis wizualny — kolor, ksztalt, material, szczegoly
+// Ten opis zastepuje zdjecie — trafia do promptu Imagena jako opis produktu
+async function describeProductFromImage(productBase64, productName, apiKey) {
   const client = new Anthropic({ apiKey });
   const msg = await client.messages.create({
     model: "claude-sonnet-4-6",
-    max_tokens: 80,
+    max_tokens: 150,
     messages: [{
       role: "user",
-      content: `Scene: "${scene}"
-Add 20-25 words of photography style ONLY. Do NOT describe/rephrase the scene.
-Example: "85mm f/1.4, warm window light, Kinfolk editorial, muted tones, soft bokeh."
-Write ONLY the style descriptors:`,
+      content: [
+        {
+          type: "image",
+          source: { type: "base64", media_type: "image/jpeg", data: productBase64 },
+        },
+        {
+          type: "text",
+          text: `Describe this product visually for an image generation AI prompt.
+Focus ONLY on: shape, color, material, surface texture, distinctive features, approximate size.
+Do NOT mention brand names, logos, text on packaging.
+Maximum 40 words. Be specific and visual.
+Example: "matte black cylindrical stainless steel thermal bottle, approximately 25cm tall, smooth brushed surface, silver metallic threaded cap with rounded top"
+Write ONLY the visual product description:`,
+        },
+      ],
     }]
   });
   return msg.content[0].text.trim();
 }
 
-// Composite produkt (bez bialego tla) z drop shadow
-// xlink:href wymagany przez librsvg < 2.52 na Vercelu
-async function addProductComposite(composites, productPngBuf, fmt, sharpLib) {
-  const targetW = Math.floor(fmt.w * 0.48);
-  const resized = await sharpLib(productPngBuf)
-    .resize(targetW, null, { fit: "inside" })
-    .png()
-    .toBuffer();
-  const meta = await sharpLib(resized).metadata();
-  const prodW = meta.width, prodH = meta.height;
-  const blur = 25;
-  const svgShadow = `<svg width="${prodW + blur * 2}" height="${prodH + blur * 2}" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
-    <defs>
-      <filter id="ds">
-        <feDropShadow dx="0" dy="${Math.floor(blur * 0.3)}" stdDeviation="${Math.floor(blur * 0.5)}" flood-color="rgba(0,0,0,0.35)"/>
-      </filter>
-    </defs>
-    <image xlink:href="data:image/png;base64,${resized.toString("base64")}"
-      x="${blur}" y="${blur}" width="${prodW}" height="${prodH}" filter="url(#ds)"/>
-  </svg>`;
-  const shadowBuf = await sharpLib(Buffer.from(svgShadow)).png().toBuffer();
-  const sM = await sharpLib(shadowBuf).metadata();
-  const left = Math.floor((fmt.w - sM.width) / 2);
-  const top = Math.floor((fmt.h - sM.height) / 2) + Math.floor(fmt.h * 0.04);
-  composites.push({ input: shadowBuf, left: Math.max(0, left), top: Math.max(0, top) });
+// KROK 2: Claude buduje kompletny prompt dla Imagena
+// Laczy: scene usera + opis produktu + styl fotograficzny
+// Imagen generuje CALA scene — osoba + produkt + otoczenie — wszystko naraz
+async function buildImagenPrompt(visualDirection, productDescription, brandContext, feedbackNotes, apiKey) {
+  const client = new Anthropic({ apiKey });
+
+  const productHint = productDescription
+    ? `The person is holding or has nearby: ${productDescription}`
+    : "";
+
+  const contextBlock = [
+    brandContext ? `Brand context: ${brandContext.slice(0, 200)}` : "",
+    feedbackNotes ? `Revision notes: ${feedbackNotes}` : "",
+  ].filter(Boolean).join(" | ");
+
+  const msg = await client.messages.create({
+    model: "claude-sonnet-4-6",
+    max_tokens: 180,
+    messages: [{
+      role: "user",
+      content: `Write a single Imagen 4 Ultra image generation prompt. The entire image — person, product, setting — must be generated together in one shot. No compositing.
+
+SCENE: "${visualDirection}"
+${productHint ? `PRODUCT IN SCENE: ${productHint}` : ""}
+${contextBlock ? `CONTEXT: ${contextBlock}` : ""}
+
+Rules:
+- Start with the scene description verbatim, keep the gender/person exactly as stated
+- Integrate the product naturally into the scene (held, on table nearby, etc.)
+- Add: photography style, lens, lighting, color grading, mood reference (photographer/magazine)
+- 60-90 words total
+- STRICTLY NO text, letters, logos, watermarks, overlays, dark bands in image
+
+Write ONLY the prompt, no explanation:`,
+    }]
+  });
+  return msg.content[0].text.trim();
+}
+
+// Fallback prompt gdy brak visualDirection i brak produktu
+function buildNeutralPrompt(concept, brandColors) {
+  const colorStr = brandColors.length ? ` Color palette: ${brandColors.join(", ")}.` : "";
+  return `Professional lifestyle advertising photograph, premium product in elegant modern setting, natural light, 85mm f/1.4, Kinfolk magazine editorial style, muted tones, clean composition.${colorStr}`;
 }
 
 export async function POST(req) {
@@ -178,75 +129,69 @@ export async function POST(req) {
         const sharp = (await import("sharp")).default;
         const embeddedFontB64 = POPPINS_BOLD_B64;
 
-        // KROK 1: Zdjecie produktu — upload > scraping
-        let productPngBuf = null;
-        let websiteText = "";
-
-        if (productImageBase64) {
-          send({ status: "scraping", message: "Przygotowuję zdjęcie produktu..." });
-          const rawBuf = Buffer.from(productImageBase64, "base64");
-          const rawPng = await sharp(rawBuf).png().toBuffer();
-          productPngBuf = await removeWhiteBackground(rawPng, sharp);
-          send({ status: "scraping", message: "Zdjęcie produktu gotowe ✓" });
-        } else if (brandUrl) {
-          send({ status: "scraping", message: `Skanuję ${brandUrl}...` });
-          const scraped = await scrapeBrandWebsite(brandUrl);
-          websiteText = scraped.text;
-          if (scraped.imageUrls.length > 0) {
-            send({ status: "scraping", message: "Pobieram zdjęcie produktu..." });
-            const downloaded = await downloadProductImage(scraped.imageUrls, sharp);
-            if (downloaded) {
-              productPngBuf = await removeWhiteBackground(downloaded, sharp);
-              send({ status: "scraping", message: "Zdjęcie produktu gotowe ✓" });
-            } else {
-              send({ status: "scraping", message: "Nie udało się pobrać zdjęcia produktu" });
-            }
+        // KROK 1: Opisz produkt slowami (Claude Vision)
+        // Jezeli user wgral zdjecie produktu — Claude opisuje go precyzyjnie
+        // Ten opis trafi do promptu Imagena — produkt bedzie naturalnie w scenie
+        let productDescription = "";
+        if (productImageBase64 && ANTHROPIC_API_KEY) {
+          send({ status: "scraping", message: "Analizuję zdjęcie produktu..." });
+          try {
+            productDescription = await describeProductFromImage(
+              productImageBase64, concept, ANTHROPIC_API_KEY
+            );
+            send({ status: "scraping", message: `Produkt opisany: ${productDescription.slice(0, 60)}...` });
+          } catch {
+            send({ status: "scraping", message: "Nie udało się opisać produktu — generuję bez opisu" });
           }
         }
 
-        // KROK 2: Prompt dla Imagena
-        // REGULA: scena = visualDirection dosłownie (tylko marka usunięta)
-        //         styl = Claude TYLKO gdy visualDirection ustawiony
-        //         brak visualDirection = neutral hardcoded (NIE pytaj Claude — dostaje kontekst marki i halucynuje jedzenie/napoje)
-        const sceneBase = visualDirection
-          .replace(/\broot7\b/gi, "")
-          .replace(/\bbean\s*&?\s*buddies\b/gi, "")
-          .replace(/\s+/g, " ")
-          .trim();
+        // Pobierz tekst ze strony (tylko jako kontekst marki, nie obrazy)
+        let brandContext = concept;
+        if (brandUrl && !brandContext) {
+          send({ status: "scraping", message: `Skanuję ${brandUrl}...` });
+          brandContext = await scrapeBrandText(brandUrl);
+        }
 
-        send({ status: "thinking", message: "Przygotowuję prompt dla Imagena..." });
-        let styleStr = "";
-        if (sceneBase && ANTHROPIC_API_KEY) {
+        // KROK 2: Zbuduj prompt dla Imagena
+        // Cala logika: scena + produkt + styl — w jednym prompcie
+        send({ status: "thinking", message: "Buduję prompt dla Imagena..." });
+        let imagenScenePrompt = "";
+
+        if (visualDirection && ANTHROPIC_API_KEY) {
           try {
-            styleStr = await generateStyleDetails(sceneBase, ANTHROPIC_API_KEY);
+            imagenScenePrompt = await buildImagenPrompt(
+              visualDirection, productDescription, brandContext, feedbackNotes, ANTHROPIC_API_KEY
+            );
           } catch {
-            styleStr = "Professional photography, 85mm lens, natural light, clean composition.";
+            // Fallback: manualnie polacz scene + opis produktu
+            const cleanScene = visualDirection.replace(/\broot7\b/gi, "").replace(/\bbean\s*&?\s*buddies\b/gi, "").trim();
+            imagenScenePrompt = `${cleanScene}${productDescription ? `, holding ${productDescription}` : ""}. Professional advertising photography, 85mm f/1.4, warm natural light, Kinfolk editorial style.`;
           }
         } else {
-          // Brak visualDirection — neutralny prompt produktowy, bez kontekstu marki
-          styleStr = "Professional product photography, clean studio light, 85mm lens, neutral background.";
+          imagenScenePrompt = buildNeutralPrompt(brandContext, brandColors);
         }
 
-        const scenePrompt = sceneBase ? `${sceneBase}. ${styleStr}` : styleStr;
-        send({ status: "brief_ready", brief: scenePrompt });
+        send({ status: "brief_ready", brief: imagenScenePrompt });
 
+        // KROK 3: Finalny prompt — dodaj globalne zakazy i miejsce na logo
         const colorStr = brandColors.length ? ` Color palette: ${brandColors.join(", ")}.` : "";
         const logoCorner = logoPosition === "roman" ? "bottom-right" : logoPosition.replace("_", " ");
 
         const imagenPrompt =
           `STRICTLY NO text, letters, numbers, words, overlays or dark bands anywhere in the image.\n\n` +
-          `${scenePrompt}${colorStr} ` +
-          `Keep ${logoCorner} corner clear for logo. No watermarks.`;
+          `${imagenScenePrompt}${colorStr} ` +
+          `Keep ${logoCorner} corner clear for logo placement. No watermarks.`;
 
-        send({ status: "generating", message: "Imagen 4 Ultra generuje scenę..." });
+        send({ status: "generating", message: "Imagen 4 Ultra generuje scenę z produktem..." });
 
-        // KROK 3: 2 warianty
+        // KROK 4: Generuj 2 warianty
+        // Imagen generuje CALA scene — Sharp TYLKO tekst + logo (brak composite produktu)
         const variants = [];
 
         for (let i = 0; i < 2; i++) {
           const iterPrompt = i === 0
             ? imagenPrompt
-            : imagenPrompt + " Alternative angle, different lighting.";
+            : imagenPrompt + " Alternative composition, different angle or lighting direction.";
 
           const imageBase64 = await generateImageWithGemini(iterPrompt, GOOGLE_API_KEY);
           const imageBuffer = Buffer.from(imageBase64, "base64");
@@ -257,12 +202,7 @@ export async function POST(req) {
             if (!fmt) continue;
             const composites = [];
 
-            // 3a: Produkt bez białego tła
-            if (productPngBuf) {
-              await addProductComposite(composites, productPngBuf, fmt, sharp);
-            }
-
-            // 3b: Tekst (opentype.js paths — no system fonts)
+            // Tekst (opentype.js — no system fonts)
             if (textOnImage?.trim()) {
               const fontBuf = Buffer.from(embeddedFontB64, "base64");
               const _ot = _require("opentype.js");
@@ -299,7 +239,7 @@ export async function POST(req) {
               }
             }
 
-            // 3c: Logo
+            // Logo
             if (logoBase64) {
               const logoBuf = Buffer.from(logoBase64, "base64");
               const maxLogoW = Math.floor(fmt.w * 0.22);
@@ -310,7 +250,6 @@ export async function POST(req) {
               composites.push({ input: resizedLogo, top: pos.y, left: pos.x });
             }
 
-            // 3d: Zloz na tle Imagena
             const resized = sharp(imageBuffer).resize(fmt.w, fmt.h, { fit: "cover", position: "center" });
             const finalBuffer = composites.length > 0
               ? await resized.composite(composites).png().toBuffer()
@@ -322,7 +261,7 @@ export async function POST(req) {
           send({ status: "variant_done", variant: i + 1, data: variants[i] });
         }
 
-        send({ status: "done", variants, visualBrief: scenePrompt });
+        send({ status: "done", variants, visualBrief: imagenScenePrompt });
 
       } catch (err) {
         send({ status: "error", message: err.message || "Blad generowania" });
