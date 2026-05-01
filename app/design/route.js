@@ -79,11 +79,9 @@ async function generateVisualBrief(concept, postContent, brandUrl, websiteConten
     ? `\nPRODUCT IMAGES FOUND ON WEBSITE: ${imageUrls.join(", ")}\n(These are real product images from the brand's website)`
     : "";
 
-  // User's visual direction is TOP PRIORITY - must dominate the image
-  // User direction is NON-NEGOTIABLE - must be the literal scene
   const contextParts = [
-    userDirection ? `MANDATORY SCENE (you MUST depict this EXACTLY): ${userDirection}` : "",
-    concept ? `Brand context (for atmosphere/mood only):\n${concept.slice(0, 400)}` : "",
+    userDirection ? `USER SCENE (MUST be depicted LITERALLY and EXACTLY — this is the image): ${userDirection}` : "",
+    concept ? `Brand context (mood/atmosphere only, do NOT override the scene above):\n${concept.slice(0, 400)}` : "",
     websiteContent ? `Website info:\n${websiteContent.slice(0, 500)}` : "",
     imageContext,
     feedbackNotes ? `Revision feedback:\n${feedbackNotes}` : "",
@@ -94,21 +92,20 @@ async function generateVisualBrief(concept, postContent, brandUrl, websiteConten
     max_tokens: 500,
     messages: [{
       role: "user",
-      content: `You are a senior art director. Write an Imagen 4 Ultra image generation prompt.
+      content: `You are a senior art director writing an Imagen 4 Ultra image generation prompt.
 
 CONTEXT:
 ${contextParts}
 
-RULES:
-- The MANDATORY SCENE above is your PRIMARY directive - depict it literally and exactly
-- Describe ONLY what was asked - do not invent unrelated elements
-- Be ultra-specific: lighting, composition, colors, photography style, mood, time of day
-- Reference real photographers/styles (e.g. "Annie Leibovitz", "Vogue editorial", "Kinfolk magazine")
-- STRICTLY NO text, logos, watermarks, labels anywhere in the image
+STRICT RULES:
+- Your prompt MUST open with the exact USER SCENE above — describe it literally, do not substitute or reinterpret it
+- Enrich ONLY with: lighting quality, photography style, lens, mood, color grading — never change the subject or setting
+- Reference real photographers/styles (e.g. "Annie Leibovitz lighting", "Kinfolk magazine editorial")
+- ABSOLUTELY NO text, logos, watermarks, labels, overlays, banners or dark bands in the image
 - 90-130 words maximum
-- Start your prompt with the exact scene described in MANDATORY SCENE
+- No preamble — start directly with the scene
 
-Write ONLY the prompt, no explanation. Start directly with the scene.`
+Write ONLY the prompt.`
     }]
   });
   return msg.content[0].text.trim();
@@ -142,11 +139,7 @@ export async function POST(req) {
 
       try {
         const sharp = (await import("sharp")).default;
-        const fs = (await import("fs")).default;
-        const path = (await import("path")).default;
 
-        // Load embedded Poppins font — deployed in public/fonts/
-        // Falls back gracefully if file not found
         // Use pre-bundled Poppins Bold — guaranteed available on Vercel serverless
         const embeddedFontB64 = POPPINS_BOLD_B64;
 
@@ -172,21 +165,27 @@ export async function POST(req) {
             productImageUrls, visualDirection, feedbackNotes, ANTHROPIC_API_KEY
           );
         } catch {
-          visualPrompt = `Professional lifestyle advertising photograph. ${visualDirection || "Clean, modern aesthetic"}. Natural light, premium quality. No text or logos.`;
+          // FIX Błąd 1: fallback also leads with the user's scene
+          visualPrompt = visualDirection
+            ? `${visualDirection}. Professional lifestyle advertising photograph. Natural light, premium quality.`
+            : `Professional lifestyle advertising photograph. Clean, modern aesthetic. Natural light, premium quality.`;
         }
         send({ status: "brief_ready", brief: visualPrompt });
 
         // Step 3: Build final Imagen prompt
+        // FIX Błąd 1: user direction goes first in finalPrompt, before Claude brief
+        // FIX Błąd 2: removed textBand — it was causing Imagen to paint a dark overlay band into the image
         const colorStr = brandColors.length ? ` Color palette: ${brandColors.join(", ")}.` : "";
         const logoCorner = logoPosition === "roman" ? "bottom-right" : logoPosition.replace("_", " ");
-        const textBand = textOnImage?.trim()
-          ? ` Reserve a clean band at ${logoPosition.startsWith("top") ? "bottom" : "top"} (15% height) with dark overlay for text.`
+
+        const scenePrefix = visualDirection
+          ? `SCENE: ${visualDirection}\n\n`
           : "";
 
         const finalPrompt =
-          `STRICTLY NO text, letters, numbers or words anywhere in the image.\n\n` +
-          `${visualPrompt}${colorStr}${textBand} ` +
-          `Keep ${logoCorner} corner clear for logo. Square 1:1. No watermarks.`;
+          `STRICTLY NO text, letters, numbers, words, overlays or dark bands anywhere in the image.\n\n` +
+          `${scenePrefix}${visualPrompt}${colorStr} ` +
+          `Keep ${logoCorner} corner clear for logo. No watermarks.`;
 
         send({ status: "generating", message: "Imagen 4 Ultra generuje..." });
 
@@ -205,10 +204,8 @@ export async function POST(req) {
 
             const composites = [];
 
-            // FIX 2: Text overlay — works even WITHOUT font (uses system Arial)
+            // Text overlay via opentype.js vector paths — no system fonts needed
             if (textOnImage?.trim()) {
-              // opentype.js: convert text to SVG vector paths
-              // No system fonts needed - font is parsed from embedded base64
               const fontBuf = Buffer.from(embeddedFontB64, "base64");
               const _ot = _require("opentype.js");
               const font = _ot.parse(fontBuf.buffer.slice(fontBuf.byteOffset, fontBuf.byteOffset + fontBuf.byteLength));
@@ -244,8 +241,7 @@ export async function POST(req) {
                 lineImgs.push({ img, w: meta.width, h: meta.height });
               }
 
-              // Subtle semi-transparent band under text
-              // Place text lines centered
+              // Place text lines centered, no dark band
               let curY = textY + 12;
               for (const { img, w: lw, h: lh } of lineImgs) {
                 composites.push({ input: img, top: curY, left: Math.floor((W - lw) / 2) });
