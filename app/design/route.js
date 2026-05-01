@@ -1,3 +1,5 @@
+import { createRequire } from "module";
+const _require = createRequire(import.meta.url);
 import { generateImageWithGemini, FORMATS, getLogoPosition, getTextY } from "@/lib/designer";
 import Anthropic from "@anthropic-ai/sdk";
 import { POPPINS_BOLD_B64 } from "@/lib/font-data";
@@ -207,7 +209,7 @@ export async function POST(req) {
               // opentype.js: convert text to SVG vector paths
               // No system fonts needed - font is parsed from embedded base64
               const fontBuf = Buffer.from(embeddedFontB64, "base64");
-              const { default: _ot } = await import("opentype.js");
+              const _ot = _require("opentype.js");
               const font = _ot.parse(fontBuf.buffer.slice(fontBuf.byteOffset, fontBuf.byteOffset + fontBuf.byteLength));
 
               const W = fmt.w;
