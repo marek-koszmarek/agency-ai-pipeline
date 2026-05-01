@@ -6,5 +6,7 @@ const nextConfig = {
     },
   },
   serverExternalPackages: ['sharp', 'opentype.js'],
+  // Cache bust: v2
 };
 export default nextConfig;
+
